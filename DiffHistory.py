@@ -119,10 +119,16 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
 
     def show_state(self, index):
         state = apply_history_patches(self.view.file_name(), index)
-        self.view.run_command("select_all")
-        self.view.run_command("right_delete")
-        for line in state.split('\n'):
-            self.view.run_command("append", {"characters": line+ "\n" })
+        file_pos = self.view.sel()[0].a
+        self.view.run_command('diff_match_patch_replace', {
+            'start' : 0,
+            'end' :self.view.size(),
+            'replacement_text' : state
+            })
+        self.view.sel().clear()
+        self.view.sel().add(sublime.Region(file_pos, file_pos))
+        # for line in state.split('\n'):
+        #     self.view.run_command("append", {"characters": line+ "\n" })
 
 def take_snapshot(filename, contents):
 
@@ -171,7 +177,6 @@ def apply_patches(history, distance_back=0):
         original = dmp.patch_apply(dmp.patch_fromText(next_patch), original)[0]
     return original
 
-
 def get_history(filename):
     history_file = os.path.join(
         os.path.dirname(filename), 
@@ -182,3 +187,7 @@ def get_history(filename):
             file_history = f.read()
         return json.loads(file_history)
 
+class DiffMatchPatchReplace(sublime_plugin.TextCommand):
+
+    def run(self, edit, start=0, end=0, replacement_text=''):
+        self.view.replace(edit, sublime.Region(start, end), replacement_text)
