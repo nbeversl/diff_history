@@ -78,11 +78,6 @@ class TakeSnapshot(EventListener):
             self.old_name = None
             self.view_being_renamed = None
 
-def get_contents(view):
-    if view != None: 
-        return view.substr(sublime.Region(0, view.size()))
-    return None
-
 class BrowseHistoryCommand(sublime_plugin.TextCommand):
 
     def run(self, edit):
