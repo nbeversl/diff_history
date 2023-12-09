@@ -1,5 +1,6 @@
 [
 	{ "keys": ["ctrl+shift+g"], "command": "browse_history" },
+	{ "keys": ["ctrl+shift+p"], "command": "show_time_written" },
 ]
 
 

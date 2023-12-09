@@ -1,4 +1,3 @@
-
 import sublime
 import sublime_plugin
 from sublime_plugin import EventListener
@@ -122,8 +121,32 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
             })
         self.view.sel().clear()
         self.view.sel().add(sublime.Region(file_pos, file_pos))
-        # for line in state.split('\n'):
-        #     self.view.run_command("append", {"characters": line+ "\n" })
+
+class ShowTimeWrittenCommand(sublime_plugin.TextCommand):
+
+    def run(self, edit):
+        
+        if self.view.file_name():
+            take_snapshot(
+                self.view.file_name(), 
+                self.view.substr(sublime.Region(0, self.view.size()))
+                )
+            new_history = get_history(self.view.file_name())                
+            if not new_history:
+                return None
+            full_line, file_pos = get_line_and_file_pos(self.view)
+            ts_format = '%a., %b. %d, %Y, %I:%M %p'
+            history_keys = sorted(list(new_history.keys()))
+
+            for index in range(len(history_keys), 0, -1):
+                state = apply_history_patches(
+                    self.view.file_name(), 
+                    index)
+                if full_line not in state:
+                    self.view.show_popup(
+                        datetime.datetime.fromtimestamp(
+                        int(history_keys[index-1])).strftime(ts_format))
+                    return
 
 def take_snapshot(filename, contents):
 
@@ -181,6 +204,13 @@ def get_history(filename):
         with open(history_file, "r") as f:
             file_history = f.read()
         return json.loads(file_history)
+
+def get_line_and_file_pos(view):
+    full_line_region = view.line(view.sel()[0])
+    line_start = full_line_region.a
+    full_line = view.substr(full_line_region)
+    return full_line, line_start
+
 
 class DiffMatchPatchReplace(sublime_plugin.TextCommand):
 
