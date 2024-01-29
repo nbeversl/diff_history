@@ -295,18 +295,23 @@ def apply_history_patches_with_deletions(
                 if diff_type == 0:
                     start_offset += len(diff_text)
                 if diff_type == -1:
-                    start_pos = start_offset+patch.start1
-                    end_pos = start_pos+len(diff_text)
-                    start_offset -= len(diff_text)
                     if stop_position and stop_position in range(start_pos, end_pos):
+                        modified_original = ''.join([
+                            original[:start_offset+patch.start1],
+                            diff_text,
+                            original[start_offset+patch.start1:]
+                        ])
+                        start_pos = start_offset+patch.start1
+                        end_pos = start_pos+len(diff_text)
                         position_deletions.append({
                             'timestamp' : timestamps[index],
                             'position_at_timestamp' : stop_position,
                             'region': (start_pos, end_pos),
-                            'state': original,
+                            'state': modified_original,
                             })
-                    elif stop_position and stop_position > end_pos:
-                        stop_position -= len(diff_text)
+
+                    if stop_position and stop_position > end_pos:
+                        stop_position += len(diff_text)
                 if diff_type == 1:
                     start_pos = start_offset+patch.start2
                     end_pos = start_pos+len(diff_text)
@@ -317,7 +322,7 @@ def apply_history_patches_with_deletions(
                             'region': (start_pos, end_pos),
                             'state': original,
                             })
-                    elif stop_position and stop_position > end_pos:
+                    if stop_position and stop_position > end_pos:
                         stop_position += len(diff_text)
 
     if stop_position:
@@ -336,7 +341,7 @@ def apply_history_patches_with_deletions(
                         diff_text,
                         original[start_offset+patch.start1:]
                         ])
-                    start_pos = start_offset+patch.start2
+                    start_pos = start_offset+patch.start1
                     end_pos = start_pos+len(diff_text)
                     deleted_ranges.append((start_pos, end_pos))
                 if diff_type == 1:
