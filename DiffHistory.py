@@ -77,7 +77,7 @@ class TakeSnapshot(EventListener):
             self.old_name = None
             self.view_being_renamed = None
 
-class BrowseHistoryCommand(BrowseHistoryCommandOld):
+class BrowseHistoryCommand(sublime_plugin.TextCommand):
 
     def run(self, edit):
         
@@ -125,7 +125,6 @@ class BrowseHistoryCommand(BrowseHistoryCommandOld):
         dmp = dmp_module.diff_match_patch()
         history = get_history(self.view.file_name()) 
         timestamps = sorted(history.keys())
-        affected_ranges = []
         for index in range(1, len(timestamps)-distance_back):
             next_patch = history[timestamps[index]]
         self.view.run_command('diff_match_patch_replace', {
