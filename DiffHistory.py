@@ -128,8 +128,7 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
         current_position = self.view.sel()[0].a
         text, added_ranges, deleted_ranges, position_additions, position_deletions = apply_history_patches_with_deletions(
             self.view.file_name(),
-            distance_back,
-            stop_position = current_position)
+            distance_back)
         dmp = dmp_module.diff_match_patch()
         history = get_history(self.view.file_name()) 
         timestamps = sorted(history.keys())
