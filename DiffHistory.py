@@ -77,7 +77,7 @@ class TakeSnapshot(EventListener):
             self.old_name = None
             self.view_being_renamed = None
 
-class BrowseHistoryCommand(sublime_plugin.TextCommand):
+class BrowseHistoryCommand(BrowseHistoryCommandOld):
 
     def run(self, edit):
         
@@ -110,43 +110,64 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
     def done(self, index):
         global is_browsing_history
         is_browsing_history=False
+        self.view.erase_regions('dmp_add')
+        deleted_regions = self.view.get_regions('dmp_del')
+        for r in deleted_regions:
+            self.view.run_command('diff_match_patch_replace', {
+                'start' : r.a,
+                'end' :r.b,
+                'replacement_text' :''
+                })
+        self.view.erase_regions('dmp_del')
 
-    def show_state(self, index):
-        state = apply_history_patches(self.view.file_name(), index)
-        file_pos = self.view.sel()[0].a
+    def show_state(self, distance_back):
+        text, added_ranges, deleted_ranges = apply_history_patches_with_deletions(self.view.file_name(), distance_back)
+        dmp = dmp_module.diff_match_patch()
+        history = get_history(self.view.file_name()) 
+        timestamps = sorted(history.keys())
+        affected_ranges = []
+        for index in range(1, len(timestamps)-distance_back):
+            next_patch = history[timestamps[index]]
         self.view.run_command('diff_match_patch_replace', {
             'start' : 0,
             'end' :self.view.size(),
-            'replacement_text' : state
+            'replacement_text' : text
             })
-        self.view.sel().clear()
-        self.view.sel().add(sublime.Region(file_pos, file_pos))
+        self.view.erase_regions('dmp_add')
+        self.view.erase_regions('dmp_del')
+        self.view.add_regions('dmp_add', 
+            [sublime.Region(r[0], r[1]) for r in added_ranges],
+            scope="region.greenish")
+        self.view.add_regions('dmp_del', 
+            [sublime.Region(r[0], r[1]) for r in deleted_ranges],
+            scope="region.redish")
 
-class ShowTimeWrittenCommand(sublime_plugin.TextCommand):
+# class ShowTimeWrittenCommand(sublime_plugin.TextCommand):
 
-    def run(self, edit):
+#     def run(self, edit):
         
-        if self.view.file_name():
-            take_snapshot(
-                self.view.file_name(), 
-                self.view.substr(sublime.Region(0, self.view.size()))
-                )
-            new_history = get_history(self.view.file_name())                
-            if not new_history:
-                return None
-            full_line, file_pos = get_line_and_file_pos(self.view)
-            ts_format = '%a., %b. %d, %Y, %I:%M %p'
-            history_keys = sorted(list(new_history.keys()))
-
-            for index in range(len(history_keys), 0, -1):
-                state = apply_history_patches(
-                    self.view.file_name(), 
-                    index)
-                if full_line not in state:
-                    self.view.show_popup(
-                        datetime.datetime.fromtimestamp(
-                        int(history_keys[index-1])).strftime(ts_format))
-                    return
+#         if self.view.file_name():
+#             take_snapshot(
+#                 self.view.file_name(), 
+#                 self.view.substr(sublime.Region(0, self.view.size())))
+#             new_history = get_history(self.view.file_name())                
+#             if not new_history:
+#                 return None
+#             ts_format = '%a., %b. %d, %Y, %I:%M %p'
+#             index = 1
+#             current_contents = self.view.substr(sublime.Region(0, self.view.size()))
+#             keys = new_history.keys()
+#             dmp = dmp_module.diff_match_patch()
+#             changed_sections = []
+#             for c in changed_sections:
+#                 if c in current_contents:
+#                     self.view.add_regions(
+#                         'diff_history',
+#                         [sublime.Region(
+#                             current_contents.find(c),
+#                             current_contents.find(c) + len(c)
+#                         )])
+#                     return
 
 def take_snapshot(filename, contents):
 
@@ -177,14 +198,35 @@ def take_snapshot(filename, contents):
             with open(history_file, "w") as f:
                 f.write(json.dumps(file_history))
 
-def apply_history_patches(filename, distance_back):
-    file_history = get_history(filename)
-    distance_back = int(distance_back)
-    return apply_patches(file_history, distance_back)
- 
-def most_recent_history(self, history):
-    times = sorted(history.keys())
-    return times[-1]
+def apply_history_patches_with_deletions(filename, distance_back):
+    dmp = dmp_module.diff_match_patch()
+    history = get_history(filename) 
+    timestamps = sorted(history.keys())
+    original = history[timestamps[0]]
+    for index in range(1, len(timestamps)-distance_back):
+        next_patch = history[timestamps[index]]        
+        original = dmp.patch_apply(dmp.patch_fromText(next_patch), original)[0]
+    
+    added_ranges = []
+    deleted_ranges = []
+    next_patch = dmp.patch_fromText(next_patch)
+    for patch in next_patch:
+        start_offset = 0
+        for diff_type, diff_text in patch.diffs:
+            if diff_type == 0:
+                start_offset += len(diff_text)
+            if diff_type == -1:
+                original = ''.join([
+                    original[:start_offset+patch.start1],
+                    diff_text,
+                    original[start_offset+patch.start1:]
+                    ])
+                deleted_ranges.append((start_offset+patch.start2, start_offset+patch.start2+len(diff_text)))
+                start_offset += len(diff_text)
+            if diff_type == 1:
+                added_ranges.append((start_offset+patch.start2, start_offset+patch.start2+len(diff_text)))
+
+    return original, added_ranges, deleted_ranges
 
 def apply_patches(history, distance_back=0):
     dmp = dmp_module.diff_match_patch()
@@ -204,13 +246,6 @@ def get_history(filename):
         with open(history_file, "r") as f:
             file_history = f.read()
         return json.loads(file_history)
-
-def get_line_and_file_pos(view):
-    full_line_region = view.line(view.sel()[0])
-    line_start = full_line_region.a
-    full_line = view.substr(full_line_region)
-    return full_line, line_start
-
 
 class DiffMatchPatchReplace(sublime_plugin.TextCommand):
 
