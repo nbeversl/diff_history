@@ -214,8 +214,6 @@ class ShowTimeWrittenCommand(sublime_plugin.TextCommand):
 
     def show_state(self, index):
         state = self.position_changes[self.timestamps[index]]
-        print(state['region'])
-        print(state['position_at_timestamp'])
         self.view.run_command('diff_match_patch_replace', {
             'start' : 0,
             'end' :self.view.size(),
@@ -303,10 +301,10 @@ def apply_history_patches_with_deletions(
     position_deletions = []
     position_additions = []
     next_patch = None
-    adjusted_stop_position = 0
+    tracked_stop_position = 0
+    size_change_before_stop_position = 0
     if stop_position:
-        adjusted_stop_position = stop_position
-
+        tracked_stop_position = stop_position
 
     for index in range(0, distance_back):
         next_patch = history[timestamps[index]]
@@ -324,41 +322,60 @@ def apply_history_patches_with_deletions(
             })
             continue
 
-        for patch in patch_group:
-            start_offset = 0
-            for diff_type, diff_text in patch.diffs:
-                if diff_type == 0:
-                    start_offset += len(diff_text) # ?
-                if diff_type == -1:
-                    start_pos = start_offset + patch.start1
-                    end_pos = start_pos + len(diff_text)
-                    if stop_position and adjusted_stop_position in range(start_pos, end_pos):
-                        patched_original = ''.join([
-                            original[:start_pos],
-                            diff_text,
-                            original[start_pos:]
-                        ])
-                        position_deletions.append({
-                            'timestamp' : timestamps[index],
-                            'position_at_timestamp' : adjusted_stop_position,
-                            'region': (start_pos, end_pos),
-                            'patched_original': patched_original
-                            })
-                    if stop_position and adjusted_stop_position > end_pos:
-                        adjusted_stop_position += len(diff_text)
-                if diff_type == 1:
-                    start_pos = start_offset + patch.start2
-                    end_pos = start_pos + len(diff_text)
-                    if stop_position and adjusted_stop_position in range(start_pos, end_pos):
-                        position_additions.append({
-                            'timestamp' : timestamps[index],
-                            'position_at_timestamp' : adjusted_stop_position,
-                            'region': (start_pos, end_pos),
-                            'patched_original': original,
-                            })
-                    if stop_position and adjusted_stop_position > end_pos:
-                        adjusted_stop_position += len(diff_text)
+        if stop_position:
+            # if there is a stop position, we want only the diffs at that position, not all of them.
+            for patch in patch_group:
+                start_offset = 0
 
+                # for every patch
+                for diff_type, diff_text in patch.diffs:
+
+                    # if something was altered, add its length to anything added/deleted.
+                    if diff_type == 0:
+                        start_offset += len(diff_text) # ?
+
+                    # if something was deleted
+                    if diff_type == -1:
+
+                        start_pos = start_offset + patch.start1
+                        end_pos = start_pos + len(diff_text)
+
+                        # if the position of interest is within the range of the patch
+                        if tracked_stop_position in range(start_pos, end_pos):
+
+                            position_deletions.append({
+                                'timestamp' : timestamps[index],
+                                'position_at_timestamp' : tracked_stop_position,
+                                'region': (start_pos, end_pos),
+                                'patched_original': ''.join([
+                                        original[:start_pos+size_change_before_stop_position],
+                                        diff_text,
+                                        original[end_pos:]
+                                    ])
+                                })
+                        # if the insertion was done before the tracked stop position,
+                        # the tracked stop position must be adjusted
+                        if tracked_stop_position > end_pos:
+                            tracked_stop_position -= len(diff_text)
+                            size_change_before_stop_position -= len(diff_text)
+                    if diff_type == 1:
+                        start_pos = start_offset + patch.start2
+                        end_pos = start_pos + len(diff_text)
+                        if tracked_stop_position in range(start_pos, end_pos):
+                            position_additions.append({
+                                'timestamp' : timestamps[index],
+                                'position_at_timestamp' : tracked_stop_position,
+                                'region': (start_pos, end_pos),
+
+                                'patched_original': ''.join([
+                                        original[:start_pos+size_change_before_stop_position],
+                                        diff_text,
+                                        original[end_pos:]
+                                    ])
+                                })
+                        if tracked_stop_position > end_pos:
+                            tracked_stop_position += len(diff_text)
+                            size_change_before_stop_position += len(diff_text)
     if stop_position:
         return original, added_ranges, deleted_ranges, position_additions, position_deletions
     if next_patch:
