@@ -201,8 +201,6 @@ class ShowTimeWrittenCommand(sublime_plugin.TextCommand):
             }
         self.view.erase_regions('dmp_add')
         self.view.erase_regions('dmp_del')
-        # print('CURRENTLY AT', self.timestamps[index])
-        # print('ALL DIFFED KEYRS ARE', position_changes.keys())
         if self.timestamps[index] in position_changes:
             state = position_changes[self.timestamps[index]]
             self.view.run_command('diff_match_patch_replace', {
@@ -371,7 +369,6 @@ def apply_history_patches_with_deletions_at_position(
 
                     # if the position of interest is within the range of the patch
                     if tracked_stop_position in range(start_pos, end_pos):
-                        print(start_pos, end_pos)
                         position_deletions.append({
                             'timestamp' : timestamps[index],
                             'position_at_timestamp' : tracked_stop_position,
@@ -391,7 +388,6 @@ def apply_history_patches_with_deletions_at_position(
                 if diff_type == 1:
                     start_pos = start_offset + patch.start2
                     end_pos = start_pos + len(diff_text)
-                    print(start_pos, end_pos)
                     if tracked_stop_position in range(start_pos, end_pos):
                         position_additions.append({
                             'timestamp' : timestamps[index],
