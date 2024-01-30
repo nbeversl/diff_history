@@ -91,11 +91,6 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
             global is_browsing_history
             is_browsing_history = True
             
-            take_snapshot(
-                self.view.file_name(), 
-                self.view.substr(sublime.Region(0, self.view.size())))
-            self.existing_contents = self.view.substr(sublime.Region(0, self.view.size()))
-
             new_history = get_history(self.view.file_name())                
             if not new_history:
                 return None
@@ -165,10 +160,6 @@ class ShowTimeWrittenCommand(sublime_plugin.TextCommand):
             global is_browsing_history
             is_browsing_history = True
             
-            take_snapshot(
-                self.view.file_name(),
-                self.view.substr(sublime.Region(0, self.view.size())))
-
             self.existing_contents = self.view.substr(sublime.Region(0, self.view.size()))
             
             new_history = get_history(self.view.file_name())                
@@ -186,7 +177,7 @@ class ShowTimeWrittenCommand(sublime_plugin.TextCommand):
                 )
 
     def show_state(self, index):
-        text, position_additions, position_deletions = apply_history_patches_with_deletions_at_position(
+        position_additions, position_deletions = apply_history_patches_with_deletions_at_position(
             self.view.file_name(),
             self.view.substr(sublime.Region(0, self.view.size())),
             index+1, #important
@@ -198,7 +189,7 @@ class ShowTimeWrittenCommand(sublime_plugin.TextCommand):
                 'timestamp': datetime.datetime.fromtimestamp(int(p['timestamp'])).strftime(TS_FORMAT),
                 'position_at_timestamp' : p['position_at_timestamp'],
                 'region' : p['region'],
-                'state': p['patched_original']
+                'state': p['patched_current']
             }
         for p in position_deletions:
             position_changes[p['timestamp']] = { 
@@ -206,19 +197,19 @@ class ShowTimeWrittenCommand(sublime_plugin.TextCommand):
                 'timestamp': datetime.datetime.fromtimestamp(int(p['timestamp'])).strftime(TS_FORMAT),
                 'position_at_timestamp' : p['position_at_timestamp'],
                 'region' : p['region'],
-                'state': p['patched_original']
+                'state': p['patched_current']
             }
-        print('CURRENTLY AT', self.timestamps[index])
-        print('ALL DIFFED KEYRS ARE', position_changes.keys())
+        self.view.erase_regions('dmp_add')
+        self.view.erase_regions('dmp_del')
+        # print('CURRENTLY AT', self.timestamps[index])
+        # print('ALL DIFFED KEYRS ARE', position_changes.keys())
         if self.timestamps[index] in position_changes:
             state = position_changes[self.timestamps[index]]
             self.view.run_command('diff_match_patch_replace', {
                 'start' : 0,
                 'end' :self.view.size(),
-                'replacement_text' : text
+                'replacement_text' : state['state']
                 })
-            self.view.erase_regions('dmp_add')
-            self.view.erase_regions('dmp_del')
             if state['change'] == ' (added)':
                 self.view.add_regions(
                     'dmp_add',
@@ -231,8 +222,6 @@ class ShowTimeWrittenCommand(sublime_plugin.TextCommand):
             self.view.show(sublime.Region(state['position_at_timestamp'], state['position_at_timestamp']))
             self.view.sel().clear()
             self.view.sel().add(sublime.Region(state['position_at_timestamp'], state['position_at_timestamp']))
-        else:
-            print('NOT IN CHANGES')
 
     def done(self, index):
         global is_browsing_history
@@ -343,7 +332,6 @@ def apply_history_patches_with_deletions_at_position(
     dmp = dmp_module.diff_match_patch()
     history = get_history(filename)
     timestamps = sorted(history.keys(), reverse=True) # latest first
-    reversed_current = current_contents
     position_deletions = []
     position_additions = []
     next_patch = None
@@ -359,14 +347,12 @@ def apply_history_patches_with_deletions_at_position(
                 'timestamp' : timestamps[index],
                 'position_at_timestamp' : stop_position,
                 'region': (0, len(original)),
-                'patched_original': original,
+                'patched_current': original,
             })
             continue
         r = reverse_patch(next_patch)
-        reversed_current = dmp.patch_apply(r, reversed_current)[0]
         # we want only the diffs at that position, not all of them.
         for patch in r:
-            print(patch.diffs)
             start_offset = 0
 
             # for every patch
@@ -385,44 +371,43 @@ def apply_history_patches_with_deletions_at_position(
 
                     # if the position of interest is within the range of the patch
                     if tracked_stop_position in range(start_pos, end_pos):
-                        print('FOUND DELETION')
+                        print(start_pos, end_pos)
                         position_deletions.append({
                             'timestamp' : timestamps[index],
                             'position_at_timestamp' : tracked_stop_position,
                             'region': (start_pos, end_pos),
-                            'patched_original': ''.join([
+                            'patched_current': ''.join([
                                     current_contents[:start_pos+size_change_before_stop_position],
                                     diff_text,
-                                    current_contents[start_pos+size_change_before_stop_position:]
+                                    current_contents[end_pos+size_change_before_stop_position:]
                                 ])
                             })
                     # if the insertion was done before the tracked stop position,
                     # the tracked stop position must be adjusted
-                    if tracked_stop_position > end_pos:
-                        print('DELETION< SUBTRACTING STOP POSITIONG')
+                    if tracked_stop_position >= end_pos:
                         tracked_stop_position -= len(diff_text)
                         size_change_before_stop_position -=len(diff_text)
 
                 if diff_type == 1:
                     start_pos = start_offset + patch.start2
                     end_pos = start_pos + len(diff_text)
+                    print(start_pos, end_pos)
                     if tracked_stop_position in range(start_pos, end_pos):
-                        print('FOUND ADDITION')
                         position_additions.append({
                             'timestamp' : timestamps[index],
                             'position_at_timestamp' : tracked_stop_position,
                             'region': (start_pos, end_pos),
-                            'patched_original': ''.join([
+                            'patched_current': ''.join([
                                     current_contents[:start_pos+size_change_before_stop_position],
                                     diff_text,
                                     current_contents[end_pos+size_change_before_stop_position:]
                                 ])
                             })
-                    if tracked_stop_position > end_pos:
+                    if tracked_stop_position >= end_pos:
                         tracked_stop_position += len(diff_text)
                         size_change_before_stop_position +=len(diff_text)
     
-    return reversed_current, position_additions, position_deletions
+    return position_additions, position_deletions
 
 def reverse_patch(patch_text):
     dmp = dmp_module.diff_match_patch()
