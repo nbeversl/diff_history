@@ -104,7 +104,7 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
             ts_format = '%a., %b. %d, %Y, %I:%M %p'
             string_timestamps = [
                 datetime.datetime.fromtimestamp(int(i)).strftime(ts_format) for i in 
-                sorted(new_history.keys(), reverse=True)
+                sorted(new_history.keys())
                 ]
 
             self.view.window().show_quick_panel(
@@ -130,6 +130,11 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
             })
         self.view.erase_regions('dmp_add')
         self.view.erase_regions('dmp_del')
+        for r in added_ranges:
+            if r[1] > len(text):
+                print('ERROR HERE', text)
+                print(r)
+
         self.view.add_regions('dmp_add', 
             [sublime.Region(r[0], r[1]) for r in added_ranges],
             scope="region.greenish")
@@ -202,7 +207,7 @@ class ShowTimeWrittenCommand(sublime_plugin.TextCommand):
                     'state': p['patched_original']
                 }
             self.position_changes = position_changes
-            timestamps = sorted(list(position_changes.keys()), reverse=True)
+            timestamps = sorted(list(position_changes.keys()))
             self.timestamps = timestamps
             items = []
             for t in timestamps:
@@ -295,7 +300,7 @@ def apply_history_patches_with_deletions(
     if distance_back == -1:
         distance_back = len(timestamps)
     original = history[timestamps[0]]
-    modified_original = original
+    fully_patched_original = original
     added_ranges = []
     deleted_ranges = []
     position_deletions = []
@@ -308,11 +313,7 @@ def apply_history_patches_with_deletions(
 
     for index in range(0, distance_back):
         next_patch = history[timestamps[index]]
-        patch_group = None
-        if index > 0:
-            patch_group = dmp.patch_fromText(next_patch)
-            modified_original = dmp.patch_apply(dmp.patch_fromText(next_patch), modified_original)[0]
-        else: # first entry
+        if index == 0: # first entry
             original = next_patch
             position_additions.append({
                 'timestamp' : timestamps[index],
@@ -321,6 +322,8 @@ def apply_history_patches_with_deletions(
                 'patched_original': original,
             })
             continue
+        patch_group = dmp.patch_fromText(next_patch)
+        fully_patched_original = dmp.patch_apply(dmp.patch_fromText(next_patch), fully_patched_original)[0]
 
         if stop_position:
             # if there is a stop position, we want only the diffs at that position, not all of them.
@@ -348,7 +351,7 @@ def apply_history_patches_with_deletions(
                                 'position_at_timestamp' : tracked_stop_position,
                                 'region': (start_pos, end_pos),
                                 'patched_original': ''.join([
-                                        original[:start_pos+size_change_before_stop_position],
+                                        original[:start_pos],
                                         diff_text,
                                         original[end_pos:]
                                     ])
@@ -368,7 +371,7 @@ def apply_history_patches_with_deletions(
                                 'region': (start_pos, end_pos),
 
                                 'patched_original': ''.join([
-                                        original[:start_pos+size_change_before_stop_position],
+                                        original[:start_pos],
                                         diff_text,
                                         original[end_pos:]
                                     ])
@@ -379,26 +382,30 @@ def apply_history_patches_with_deletions(
     if stop_position:
         return original, added_ranges, deleted_ranges, position_additions, position_deletions
     if next_patch:
-        next_patch = dmp.patch_fromText(next_patch)
-        for patch in next_patch:
-            start_offset = 0
-            for diff_type, diff_text in patch.diffs:
-                if diff_type == 0:
-                    start_offset += len(diff_text)
-                if diff_type == -1:
-                    original = ''.join([
-                        original[:start_offset+patch.start1],
-                        diff_text,
-                        original[start_offset+patch.start1:]
-                        ])
-                    start_pos = start_offset+patch.start1
-                    end_pos = start_pos+len(diff_text)
-                    deleted_ranges.append((start_pos, end_pos))
-                if diff_type == 1:
-                    start_pos = start_offset+patch.start2
-                    end_pos = start_pos+len(diff_text)
-                    added_ranges.append((start_pos, end_pos))
-    return original, added_ranges, deleted_ranges, position_additions, position_deletions
+        if index > 0:
+            next_patch = dmp.patch_fromText(next_patch)
+            for patch in next_patch:
+                start_offset = 0
+                for diff_type, diff_text in patch.diffs:
+                    if diff_type == 0:
+                        start_offset += len(diff_text)
+                    if diff_type == -1:
+                        fully_patched_original = ''.join([
+                            fully_patched_original[:start_offset+patch.start1],
+                            diff_text,
+                            fully_patched_original[start_offset+patch.start1:]
+                            ])
+                        start_pos = start_offset+patch.start1
+                        end_pos = start_pos+len(diff_text)
+                        deleted_ranges.append((start_pos, end_pos))
+                    if diff_type == 1:
+                        start_pos = start_offset+patch.start2
+                        end_pos = start_pos+len(diff_text)
+                        added_ranges.append((start_pos, end_pos))
+        else: # first entry
+            fully_patched_original = next_patch
+            added_ranges.append((0, len(fully_patched_original)))
+    return fully_patched_original, added_ranges, deleted_ranges, position_additions, position_deletions
 
 def apply_patches(history, distance_back=0):
     dmp = dmp_module.diff_match_patch()
