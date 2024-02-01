@@ -148,7 +148,6 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
                 'end' :self.view.size(),
                 'replacement_text' : self.existing_contents
             })
-
         self.view.erase_regions('dmp_del')
 
 class ShowTimeWrittenCommand(sublime_plugin.TextCommand):
@@ -194,10 +193,16 @@ class ShowTimeWrittenCommand(sublime_plugin.TextCommand):
                     self.view.add_regions('dmp_add',
                         [sublime.Region(patch['region'][0], patch['region'][1])],
                         scope="region.greenish")
-                else:
+                elif patch['change'] == ' (deleted)':
                     self.view.add_regions('dmp_del', 
                         [sublime.Region(patch['region'][0], patch['region'][1])],
                         scope="region.redish")
+                elif patch['change'] == ' (other modified)':
+                    self.view.add_regions('dmp_del', 
+                        [sublime.Region(patch['region'][0], patch['region'][1])],
+                        scope="region.yellowish")
+
+            print(state['position_at_timestamp'])
             self.view.show(sublime.Region(state['position_at_timestamp'], state['position_at_timestamp']))
             self.view.sel().clear()
             self.view.sel().add(sublime.Region(state['position_at_timestamp'], state['position_at_timestamp']))
@@ -312,74 +317,90 @@ def apply_history_patches_with_deletions_at_position(
     tracked_stop_position = stop_position
     size_change_before_stop_position = 0
     position_changes = {}
+    patched_contents_at_position = current_contents
 
     for index in range(0, len(timestamps)):
-        patched_contents_at_position = current_contents
         timestamp = timestamps[index]
         next_patch = history[timestamp]
         if index == len(timestamps) - 1:
             if tracked_stop_position in range(len(next_patch)): # first entry
                 position_changes[timestamp] = {}
                 position_changes[timestamp]['patches'] = [{
-                    'timestamp' : timestamp,
+                    'change': ' (added)',
                     'region': (0, len(next_patch)),
                 }]
                 position_changes[timestamp]['position_at_timestamp'] = tracked_stop_position
                 position_changes[timestamp]['state'] = next_patch
             continue
         r = reverse_patch(next_patch)
-        for patch in r:
+        position_changes.setdefault(timestamp, {})
+        position_changes[timestamp].setdefault('patches', [])
 
+        for patch in r:
             start_offset = 0
             for diff_type, diff_text in patch.diffs:
 
                 # if something was altered, add its length to anything added/deleted.
-                if diff_type == 0:
-                    start_offset += len(diff_text) # ?
+                # if diff_type == 0:
+                #     start_offset += len(diff_text) # ?
 
-                # if something was deleted
                 if diff_type == -1:
 
-                    # get the start and end positions of the patch
                     start_pos = start_offset + patch.start1
                     end_pos = start_pos + len(diff_text)
 
-                    position_changes.setdefault(timestamp, {})
-                    position_changes[timestamp].setdefault('patches', [])
+                    if tracked_stop_position in range(start_pos, end_pos):
+                        
+                        position_changes[timestamp]['patches'].append({ 
+                            'change': ' (deleted)',
+                            'region' : (start_pos, end_pos)})
 
-                    position_changes[timestamp]['patches'].append({ 
-                        'change': ' (deleted)',
-                        'region' : (start_pos, end_pos)})
+                        # patched_contents_at_position = ''.join([
+                        #     patched_contents_at_position[:start_pos],
+                        #     diff_text,
+                        #     patched_contents_at_position[end_pos:]
+                        # ])
 
-                    current_contents = ''.join([
-                            patched_contents_at_position[:start_pos+size_change_before_stop_position],
-                            diff_text,
-                            patched_contents_at_position[end_pos+size_change_before_stop_position:]
-                        ])
+                        # this is what is missing
+                        # position_in_patch = tracked_stop_position - len(patched_contents_at_position[:start_pos])
+                        tracked_stop_position += len(diff_text)
+                    else:
+                        position_changes[timestamp]['patches'].append({ 
+                            'change': ' (other modified)',
+                            'region' : (start_pos, end_pos)})
 
                     if tracked_stop_position > end_pos:
-                        tracked_stop_position -= len(diff_text)
-                        size_change_before_stop_position -=len(diff_text)
+                         tracked_stop_position -= len(diff_text)
+                         size_change_before_stop_position -=len(diff_text)
 
                 if diff_type == 1:
                     start_pos = start_offset + patch.start2
                     end_pos = start_pos + len(diff_text)
-                    position_changes.setdefault(timestamp, {})
-                    position_changes[timestamp].setdefault('patches', [])
 
-                    position_changes[timestamp]['patches'].append({ 
-                        'change': ' (added)',
-                        'region' : (start_pos, end_pos)})
+                    if tracked_stop_position in range(start_pos, end_pos):
 
-                    current_contents = ''.join([
-                        patched_contents_at_position[:start_pos+size_change_before_stop_position],
-                        diff_text,
-                        patched_contents_at_position[end_pos+size_change_before_stop_position:]
-                    ])
+                        position_changes[timestamp]['patches'].append({ 
+                            'change': ' (added)',
+                            'region' : (start_pos, end_pos)})
 
-                    if tracked_stop_position > end_pos:
+                        patched_contents_at_position = ''.join([
+                            patched_contents_at_position[:start_pos],
+                            diff_text,
+                            patched_contents_at_position[end_pos:]
+                        ])
+
+                        # this is what is missing
+                        # position_in_patch = tracked_stop_position - len(patched_contents_at_position[:start_pos])
                         tracked_stop_position += len(diff_text)
-                        size_change_before_stop_position +=len(diff_text)
+
+                    else:
+                        position_changes[timestamp]['patches'].append({ 
+                            'change': ' (other modified)',
+                            'region' : (start_pos, end_pos)})
+
+                        # elif tracked_stop_position > end_pos:
+                        #     tracked_stop_position += len(diff_text)
+                        #     size_change_before_stop_position +=len(diff_text)
     
         position_changes[timestamp]['state'] = patched_contents_at_position
         position_changes[timestamp]['position_at_timestamp'] = tracked_stop_position
