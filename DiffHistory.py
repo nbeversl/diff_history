@@ -150,84 +150,6 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
             })
         self.view.erase_regions('dmp_del')
 
-# class ShowTimeWrittenCommand(sublime_plugin.TextCommand):
-
-#     def run(self, edit):
-        
-#         if self.view.file_name():
-
-#             global is_browsing_history
-#             is_browsing_history = True
-            
-#             self.existing_contents = self.view.substr(sublime.Region(0, self.view.size()))
-            
-#             self.position_changes = apply_history_patches_with_deletions_at_position(
-#                 self.view.file_name(),
-#                 self.view.substr(sublime.Region(0, self.view.size())),
-#                 self.view.sel()[0].a)
-
-#             if not self.position_changes:
-#                 return
-            
-#             self.timestamps = sorted(self.position_changes.keys(), reverse=True)
-#             string_timestamps = [
-#                 datetime.datetime.fromtimestamp(int(i)).strftime(TS_FORMAT) for i in self.timestamps]
-#             string_timestamps = sorted(string_timestamps, reverse=True) # why is this needed?
-#             self.view.window().show_quick_panel(
-#                 string_timestamps,
-#                 self.done,
-#                 on_highlight=self.show_state)
-
-#     def show_state(self, index):
-#         self.view.erase_regions('dmp_add')
-#         self.view.erase_regions('dmp_del')
-#         if self.timestamps[index-1] in self.position_changes:
-#             state = self.position_changes[self.timestamps[index-1]]
-#             self.view.run_command('diff_match_patch_replace', {
-#                 'start' : 0,
-#                 'end' :self.view.size(),
-#                 'replacement_text' : state['state']
-#                 })
-#             for patch in self.position_changes[self.timestamps[index-1]]['patches']:
-#                 if patch['change'] == ' (added)':
-#                     self.view.add_regions('dmp_add',
-#                         [sublime.Region(patch['region'][0], patch['region'][1])],
-#                         scope="region.greenish")
-#                 elif patch['change'] == ' (deleted)':
-#                     self.view.add_regions('dmp_del', 
-#                         [sublime.Region(patch['region'][0], patch['region'][1])],
-#                         scope="region.redish")
-#                 elif patch['change'] == ' (other modified)':
-#                     self.view.add_regions('dmp_del', 
-#                         [sublime.Region(patch['region'][0], patch['region'][1])],
-#                         scope="region.yellowish")
-
-#             print(state['position_at_timestamp'])
-#             self.view.show(sublime.Region(state['position_at_timestamp'], state['position_at_timestamp']))
-#             self.view.sel().clear()
-#             self.view.sel().add(sublime.Region(state['position_at_timestamp'], state['position_at_timestamp']))
-
-#     def done(self, index):
-#         global is_browsing_history
-#         is_browsing_history=False
-#         self.view.erase_regions('dmp_add')
-#         deleted_regions = self.view.get_regions('dmp_del')
-#         if index > -1:
-#             deleted_regions = self.view.get_regions('dmp_del')
-#             for r in deleted_regions:
-#                 self.view.run_command('diff_match_patch_replace', {
-#                     'start' : r.a,
-#                     'end' :r.b,
-#                     'replacement_text' :''
-#                     })
-#         else:
-#             self.view.run_command('diff_match_patch_replace', {
-#                 'start' : 0,
-#                 'end' :self.view.size(),
-#                 'replacement_text' : self.existing_contents
-#             })
-#         self.view.erase_regions('dmp_del')
-
 def take_snapshot(filename, contents):
 
     dmp = dmp_module.diff_match_patch()
@@ -259,7 +181,8 @@ def take_snapshot(filename, contents):
 
 def apply_history_patches_with_deletions(
     filename,
-    distance_back):
+    distance_back,
+    current_position):
 
     dmp = dmp_module.diff_match_patch()
     history = get_history(filename)
@@ -269,8 +192,7 @@ def apply_history_patches_with_deletions(
     added_ranges = []
     deleted_ranges = []
     next_patch = None
-    tracked_stop_position = 0
-    size_change_before_stop_position = 0
+    tracked_position = current_position
 
     for index in range(0, len(timestamps) - distance_back):
         next_patch = history[timestamps[index]]
@@ -296,7 +218,7 @@ def apply_history_patches_with_deletions(
                             ])
                         start_pos = start_offset+patch.start1
                         end_pos = start_pos+len(diff_text)
-                        deleted_ranges.append((start_pos, end_pos))
+                        deleted_ranges.append((start_pos, end_pos, tracked_position))
                     if diff_type == 1:
                         start_pos = start_offset+patch.start2
                         end_pos = start_pos+len(diff_text)
