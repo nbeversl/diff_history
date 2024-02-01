@@ -150,83 +150,83 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
             })
         self.view.erase_regions('dmp_del')
 
-class ShowTimeWrittenCommand(sublime_plugin.TextCommand):
+# class ShowTimeWrittenCommand(sublime_plugin.TextCommand):
 
-    def run(self, edit):
+#     def run(self, edit):
         
-        if self.view.file_name():
+#         if self.view.file_name():
 
-            global is_browsing_history
-            is_browsing_history = True
+#             global is_browsing_history
+#             is_browsing_history = True
             
-            self.existing_contents = self.view.substr(sublime.Region(0, self.view.size()))
+#             self.existing_contents = self.view.substr(sublime.Region(0, self.view.size()))
             
-            self.position_changes = apply_history_patches_with_deletions_at_position(
-                self.view.file_name(),
-                self.view.substr(sublime.Region(0, self.view.size())),
-                self.view.sel()[0].a)
+#             self.position_changes = apply_history_patches_with_deletions_at_position(
+#                 self.view.file_name(),
+#                 self.view.substr(sublime.Region(0, self.view.size())),
+#                 self.view.sel()[0].a)
 
-            if not self.position_changes:
-                return
+#             if not self.position_changes:
+#                 return
             
-            self.timestamps = sorted(self.position_changes.keys(), reverse=True)
-            string_timestamps = [
-                datetime.datetime.fromtimestamp(int(i)).strftime(TS_FORMAT) for i in self.timestamps]
-            string_timestamps = sorted(string_timestamps, reverse=True) # why is this needed?
-            self.view.window().show_quick_panel(
-                string_timestamps,
-                self.done,
-                on_highlight=self.show_state)
+#             self.timestamps = sorted(self.position_changes.keys(), reverse=True)
+#             string_timestamps = [
+#                 datetime.datetime.fromtimestamp(int(i)).strftime(TS_FORMAT) for i in self.timestamps]
+#             string_timestamps = sorted(string_timestamps, reverse=True) # why is this needed?
+#             self.view.window().show_quick_panel(
+#                 string_timestamps,
+#                 self.done,
+#                 on_highlight=self.show_state)
 
-    def show_state(self, index):
-        self.view.erase_regions('dmp_add')
-        self.view.erase_regions('dmp_del')
-        if self.timestamps[index-1] in self.position_changes:
-            state = self.position_changes[self.timestamps[index-1]]
-            self.view.run_command('diff_match_patch_replace', {
-                'start' : 0,
-                'end' :self.view.size(),
-                'replacement_text' : state['state']
-                })
-            for patch in self.position_changes[self.timestamps[index-1]]['patches']:
-                if patch['change'] == ' (added)':
-                    self.view.add_regions('dmp_add',
-                        [sublime.Region(patch['region'][0], patch['region'][1])],
-                        scope="region.greenish")
-                elif patch['change'] == ' (deleted)':
-                    self.view.add_regions('dmp_del', 
-                        [sublime.Region(patch['region'][0], patch['region'][1])],
-                        scope="region.redish")
-                elif patch['change'] == ' (other modified)':
-                    self.view.add_regions('dmp_del', 
-                        [sublime.Region(patch['region'][0], patch['region'][1])],
-                        scope="region.yellowish")
+#     def show_state(self, index):
+#         self.view.erase_regions('dmp_add')
+#         self.view.erase_regions('dmp_del')
+#         if self.timestamps[index-1] in self.position_changes:
+#             state = self.position_changes[self.timestamps[index-1]]
+#             self.view.run_command('diff_match_patch_replace', {
+#                 'start' : 0,
+#                 'end' :self.view.size(),
+#                 'replacement_text' : state['state']
+#                 })
+#             for patch in self.position_changes[self.timestamps[index-1]]['patches']:
+#                 if patch['change'] == ' (added)':
+#                     self.view.add_regions('dmp_add',
+#                         [sublime.Region(patch['region'][0], patch['region'][1])],
+#                         scope="region.greenish")
+#                 elif patch['change'] == ' (deleted)':
+#                     self.view.add_regions('dmp_del', 
+#                         [sublime.Region(patch['region'][0], patch['region'][1])],
+#                         scope="region.redish")
+#                 elif patch['change'] == ' (other modified)':
+#                     self.view.add_regions('dmp_del', 
+#                         [sublime.Region(patch['region'][0], patch['region'][1])],
+#                         scope="region.yellowish")
 
-            print(state['position_at_timestamp'])
-            self.view.show(sublime.Region(state['position_at_timestamp'], state['position_at_timestamp']))
-            self.view.sel().clear()
-            self.view.sel().add(sublime.Region(state['position_at_timestamp'], state['position_at_timestamp']))
+#             print(state['position_at_timestamp'])
+#             self.view.show(sublime.Region(state['position_at_timestamp'], state['position_at_timestamp']))
+#             self.view.sel().clear()
+#             self.view.sel().add(sublime.Region(state['position_at_timestamp'], state['position_at_timestamp']))
 
-    def done(self, index):
-        global is_browsing_history
-        is_browsing_history=False
-        self.view.erase_regions('dmp_add')
-        deleted_regions = self.view.get_regions('dmp_del')
-        if index > -1:
-            deleted_regions = self.view.get_regions('dmp_del')
-            for r in deleted_regions:
-                self.view.run_command('diff_match_patch_replace', {
-                    'start' : r.a,
-                    'end' :r.b,
-                    'replacement_text' :''
-                    })
-        else:
-            self.view.run_command('diff_match_patch_replace', {
-                'start' : 0,
-                'end' :self.view.size(),
-                'replacement_text' : self.existing_contents
-            })
-        self.view.erase_regions('dmp_del')
+#     def done(self, index):
+#         global is_browsing_history
+#         is_browsing_history=False
+#         self.view.erase_regions('dmp_add')
+#         deleted_regions = self.view.get_regions('dmp_del')
+#         if index > -1:
+#             deleted_regions = self.view.get_regions('dmp_del')
+#             for r in deleted_regions:
+#                 self.view.run_command('diff_match_patch_replace', {
+#                     'start' : r.a,
+#                     'end' :r.b,
+#                     'replacement_text' :''
+#                     })
+#         else:
+#             self.view.run_command('diff_match_patch_replace', {
+#                 'start' : 0,
+#                 'end' :self.view.size(),
+#                 'replacement_text' : self.existing_contents
+#             })
+#         self.view.erase_regions('dmp_del')
 
 def take_snapshot(filename, contents):
 
@@ -306,23 +306,7 @@ def apply_history_patches_with_deletions(
             added_ranges.append((0, len(fully_patched_original)))
     return fully_patched_original, added_ranges, deleted_ranges
 
-def apply_history_patches_with_deletions_at_position(
-    filename,
-    current_contents,
-    stop_position):
 
-    dmp = dmp_module.diff_match_patch()
-    history = get_history(filename)
-    timestamps = sorted(history.keys(), reverse=True) # latest first
-    tracked_stop_position = stop_position
-    size_change_before_stop_position = 0
-    position_changes = {}
-    patched_contents_at_position = current_contents
-
-    for index in range(0, len(timestamps)):
-        timestamp = timestamps[index]
-        next_patch = history[timestamp]
-        if index == len(timestamps) - 1:
             if tracked_stop_position in range(len(next_patch)): # first entry
                 position_changes[timestamp] = {}
                 position_changes[timestamp]['patches'] = [{
@@ -332,7 +316,6 @@ def apply_history_patches_with_deletions_at_position(
                 position_changes[timestamp]['position_at_timestamp'] = tracked_stop_position
                 position_changes[timestamp]['state'] = next_patch
             continue
-        r = reverse_patch(next_patch)
         position_changes.setdefault(timestamp, {})
         position_changes[timestamp].setdefault('patches', [])
 
@@ -405,21 +388,6 @@ def apply_history_patches_with_deletions_at_position(
         position_changes[timestamp]['state'] = patched_contents_at_position
         position_changes[timestamp]['position_at_timestamp'] = tracked_stop_position
     return position_changes
-
-def reverse_patch(patch_text):
-    dmp = dmp_module.diff_match_patch()
-    patch = dmp.patch_fromText(patch_text)
-    reversed_patch = dmp.patch_fromText(patch_text)
-    for index in range(0,len(patch)):        
-        reversed_patch[index].start1 = patch[index].start2
-        reversed_patch[index].start2 = patch[index].start1
-        reversed_patch[index].length1 = patch[index].length2
-        reversed_patch[index].length2 = patch[index].length1
-        diff = patch[index]
-        for diff_index in range(len(diff.diffs)):
-            reversed_patch[index].diffs[diff_index] = (patch[index].diffs[diff_index][0] * -1, patch[index].diffs[diff_index][1])
-            reversed_patch[index].diffs[diff_index] = (patch[index].diffs[diff_index][0] * -1, patch[index].diffs[diff_index][1])
-    return reversed_patch
 
 def apply_patches(history):
     dmp = dmp_module.diff_match_patch()
