@@ -8,6 +8,9 @@ import json
 import concurrent.futures
 import DiffHistory.diff_match_patch as dmp_module
 
+
+# There are two things that are more difficult than making an after-dinner speech: climbing a wall which is leaning toward you and kissing a girl who is leaning away from you.
+# Churchill%60 talked about cli
 is_browsing_history = False
 TS_FORMAT = '%a., %b. %d, %Y, %I:%M %p'
 
@@ -118,7 +121,7 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
             })
         self.view.erase_regions('dmp_add')
         self.view.erase_regions('dmp_del')
-        self.view.add_regions('dmp_add',
+        self.view.add_regions('dmp_add', 
             [sublime.Region(r[0], r[1]) for r in added_ranges],
             scope="region.greenish")
         self.view.add_regions('dmp_del', 
@@ -200,9 +203,9 @@ class ShowTimeWrittenCommand(sublime_plugin.TextCommand):
                         [sublime.Region(patch['region'][0], patch['region'][1])],
                         scope="region.redish")
             self.view.sel().clear()
-            if state['position_is_showing'] == True:
-                self.view.sel().add(sublime.Region(state['position_at_timestamp'], state['position_at_timestamp']+1))
-                self.view.show(sublime.Region(state['position_at_timestamp'], state['position_at_timestamp']))
+            # if state['position_is_showing'] == True:
+            self.view.sel().add(sublime.Region(state['position_at_timestamp'], state['position_at_timestamp']+1))
+            self.view.show(sublime.Region(state['position_at_timestamp'], state['position_at_timestamp']))
 
     def done(self, index):
         self.view.erase_regions('dmp_add')
@@ -331,25 +334,25 @@ def apply_history_patches_with_deletions_at_position(
                 position_changes[timestamp]['state'] = next_patch
             continue
         r = reverse_patch(next_patch)
+
         patched_contents_at_position = dmp.patch_apply(r, patched_contents_at_position)[0]
         position_changes.setdefault(timestamp, {'patches':[]})
-
+        print('--------------------------')
         for patch in r:
-            start_offset = 0
+            # print(patch.__dict__)
             for diff_type, diff_text in patch.diffs:
-
-                # if something was altered, add its length to anything added/deleted.
+                start_offset = 0
                 if diff_type == 0:
-                    start_offset += len(diff_text) # ?
+                    start_offset += patch.length2 # ?
 
                 if diff_type == -1:
                     start_pos = start_offset + patch.start2
-                    end_pos = start_pos + len(diff_text)
+                    end_pos = start_pos + patch.length2
 
-                    if tracked_stop_position in range(start_pos, end_pos):
-                        position_is_showing = False
+                    # if tracked_stop_position in range(start_pos, end_pos):
+                    #     position_is_showing = False
 
-                    if tracked_stop_position > start_pos and tracked_stop_position < len(patched_contents_at_position):
+                    if tracked_stop_position > end_pos and tracked_stop_position < len(patched_contents_at_position):
                         tracked_stop_position -= len(diff_text)
 
                     position_changes[timestamp]['patches'].append({ 
@@ -358,10 +361,10 @@ def apply_history_patches_with_deletions_at_position(
 
                 if diff_type == 1:
                     start_pos = start_offset + patch.start2
-                    end_pos = start_pos + len(diff_text)
+                    end_pos = start_pos + patch.length2
 
-                    if tracked_stop_position in range(start_pos, end_pos):
-                        position_is_showing = True
+                    # if tracked_stop_position in range(start_pos, end_pos):
+                    #     position_is_showing = True
 
                     if tracked_stop_position > end_pos and tracked_stop_position < len(patched_contents_at_position):
                         tracked_stop_position += len(diff_text)
