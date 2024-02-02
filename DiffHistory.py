@@ -140,7 +140,7 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
         # elif deleted_ranges:
         #     self.view.show(sublime.Region(deleted_ranges[0][0], deleted_ranges[0][1]))
         self.view.sel().clear()
-        if self.tracked_position <= len(patched_version):
+        if self.tracked_position <= len(state_length):
             self.view.sel().add(sublime.Region(self.tracked_position, self.tracked_position))
             self.view.show(sublime.Region(self.tracked_position, self.tracked_position+1))
 
@@ -221,13 +221,10 @@ def apply_history_patches_with_deletions(
             for patch in patch_group:
                 for diff_type, diff_text in patch.diffs:
                     start_offset = 0
-                    # start1 is the start position in the previous text
-                    # start2 is the start position in the new text
-
                     if diff_type == 0:
                         start_offset += len(diff_text)
                     if diff_type == -1:
-                       if tracked_position > start_offset+patch.start2+len(diff_text) and (
+                       if tracked_position > start_offset+patch.start2 and (
                             tracked_position < len(fully_patched_original)):
                             tracked_position -= len(diff_text)
                     if diff_type == 1:
@@ -246,8 +243,6 @@ def apply_history_patches_with_deletions(
                         start_pos = start_offset+patch.start1
                         end_pos = start_pos+len(diff_text)
                         deleted_ranges.append((start_pos, end_pos))
-                        # if tracked_position > start_pos:
-                        #     tracked_position += len(diff_text)
                         fully_patched_original = ''.join([
                             fully_patched_original[:start_pos],
                             diff_text,
