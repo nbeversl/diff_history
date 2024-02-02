@@ -94,6 +94,8 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
             new_history = get_history(self.view.file_name())                
             if not new_history:
                 return None
+
+            self.tracked_position = None
             string_timestamps = [
                 datetime.datetime.fromtimestamp(int(i)).strftime(TS_FORMAT) for i in 
                 sorted([int(i) for i in new_history.keys()], reverse=True)
@@ -104,12 +106,17 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
                 self.done,
                 on_highlight=self.show_state,
                 )
+            self.existing_contents = self.view.substr(sublime.Region(0, self.view.size()))
 
     def show_state(self, distance_back):
-        current_position = self.view.sel()[0].a
-        patched_version, added_ranges, deleted_ranges = apply_history_patches_with_deletions(
+        if self.tracked_position == None:
+            self.tracked_position = self.view.sel()[0].a
+        patched_version, added_ranges, deleted_ranges, self.tracked_position = apply_history_patches_with_deletions(
             self.view.file_name(),
-            distance_back)
+            distance_back,
+            self.tracked_position
+            )
+        print('FROM SHOW STATE, tracked_position is now', self.tracked_position)
         self.view.run_command('diff_match_patch_replace', {
             'start' : 0,
             'end' :self.view.size(),
@@ -117,23 +124,35 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
             })
         self.view.erase_regions('dmp_add')
         self.view.erase_regions('dmp_del')
+        self.view.erase_regions('dmp_position')
         self.view.add_regions('dmp_add',
             [sublime.Region(r[0], r[1]) for r in added_ranges],
             scope="region.greenish")
         self.view.add_regions('dmp_del', 
             [sublime.Region(r[0], r[1]) for r in deleted_ranges],
             scope="region.redish")
-        if added_ranges:
-            self.view.show(sublime.Region(added_ranges[0][0], added_ranges[0][1]))
-        elif deleted_ranges:
-            self.view.show(sublime.Region(deleted_ranges[0][0], deleted_ranges[0][1]))
+        self.view.add_regions('dmp_position',
+            [sublime.Region(self.tracked_position, self.tracked_position+1)],
+            scope="region.white")
+
+        # for showing at the top of the diff:
+        # if added_ranges:
+        #     self.view.show(sublime.Region(added_ranges[0][0], added_ranges[0][1]))
+        # elif deleted_ranges:
+        #     self.view.show(sublime.Region(deleted_ranges[0][0], deleted_ranges[0][1]))
         self.view.sel().clear()
-        self.view.sel().add(sublime.Region(current_position, current_position))
+        if self.tracked_position <= len(patched_version):
+            self.view.sel().add(sublime.Region(self.tracked_position, self.tracked_position))
+            self.view.show(sublime.Region(self.tracked_position, self.tracked_position+1))
+        else:
+            print('NO')
+   
 
     def done(self, index):
         global is_browsing_history
         is_browsing_history=False
         self.view.erase_regions('dmp_add')
+        self.view.erase_regions('dmp_position')
         if index > -1:
             deleted_regions = self.view.get_regions('dmp_del')
             for r in deleted_regions:
@@ -149,6 +168,7 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
                 'replacement_text' : self.existing_contents
             })
         self.view.erase_regions('dmp_del')
+
 
 def take_snapshot(filename, contents):
 
@@ -182,7 +202,8 @@ def take_snapshot(filename, contents):
 def apply_history_patches_with_deletions(
     filename,
     distance_back,
-    current_position):
+    tracked_position):
+    print('------------------------------------')
 
     dmp = dmp_module.diff_match_patch()
     history = get_history(filename)
@@ -192,16 +213,40 @@ def apply_history_patches_with_deletions(
     added_ranges = []
     deleted_ranges = []
     next_patch = None
-    tracked_position = current_position
 
+    # in order earliest to most recent
     for index in range(0, len(timestamps) - distance_back):
         next_patch = history[timestamps[index]]
         if index == 0: # first entry
             fully_patched_original = next_patch
             continue
         patch_group = dmp.patch_fromText(next_patch)
-        fully_patched_original = dmp.patch_apply(dmp.patch_fromText(next_patch), fully_patched_original)[0]
+        fully_patched_original = dmp.patch_apply(patch_group, fully_patched_original)[0]
+        if distance_back > 1:
+            for patch in patch_group:
+                for diff_type, diff_text in patch.diffs:
+                    start_offset = 0
+                    # start1 is the start position in the previous text
+                    # start2 is the start position in the new text
 
+                    if diff_type == 0:
+                        start_offset += len(diff_text)
+                    if diff_type == -1:
+                       if tracked_position > start_offset+patch.start2+len(diff_text) and (
+                            tracked_position < len(fully_patched_original)):
+                            tracked_position -= len(diff_text)
+                            # print(patch.__dict__)
+                            print(diff_text)
+                            print('moving backward', len(diff_text))
+                            print('now', tracked_position)
+                    if diff_type == 1:
+                        if tracked_position > start_offset+patch.start2+len(diff_text) and (
+                            tracked_position < len(fully_patched_original)):
+                            tracked_position += len(diff_text)
+                            # print(patch.__dict__)
+                            print(diff_text)
+                            print('moving forward', len(diff_text))
+                            print('now', tracked_position)  
     if next_patch:
         if index > 0:
             next_patch = dmp.patch_fromText(next_patch)
@@ -211,14 +256,16 @@ def apply_history_patches_with_deletions(
                     if diff_type == 0:
                         start_offset += len(diff_text)
                     if diff_type == -1:
-                        fully_patched_original = ''.join([
-                            fully_patched_original[:start_offset+patch.start1],
-                            diff_text,
-                            fully_patched_original[start_offset+patch.start1:]
-                            ])
                         start_pos = start_offset+patch.start1
                         end_pos = start_pos+len(diff_text)
-                        deleted_ranges.append((start_pos, end_pos, tracked_position))
+                        deleted_ranges.append((start_pos, end_pos))
+                        # if tracked_position > start_pos:
+                        #     tracked_position += len(diff_text)
+                        fully_patched_original = ''.join([
+                            fully_patched_original[:start_pos],
+                            diff_text,
+                            fully_patched_original[start_pos:]
+                            ])
                     if diff_type == 1:
                         start_pos = start_offset+patch.start2
                         end_pos = start_pos+len(diff_text)
@@ -226,7 +273,9 @@ def apply_history_patches_with_deletions(
         else: # first entry
             fully_patched_original = next_patch
             added_ranges.append((0, len(fully_patched_original)))
-    return fully_patched_original, added_ranges, deleted_ranges
+    print('FINAL TRACKED POSITION')
+    print(tracked_position)
+    return fully_patched_original, added_ranges, deleted_ranges, tracked_position
 
 def apply_patches(history):
     dmp = dmp_module.diff_match_patch()
