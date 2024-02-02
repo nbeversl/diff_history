@@ -111,7 +111,7 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
     def show_state(self, distance_back):
         if self.tracked_position == None:
             self.tracked_position = self.view.sel()[0].a
-        patched_version, added_ranges, deleted_ranges, self.tracked_position = apply_history_patches_with_deletions(
+        patched_version, added_ranges, deleted_ranges, self.tracked_position, state_length = apply_history_patches_with_deletions(
             self.view.file_name(),
             distance_back,
             self.tracked_position
@@ -141,7 +141,7 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
         # elif deleted_ranges:
         #     self.view.show(sublime.Region(deleted_ranges[0][0], deleted_ranges[0][1]))
         self.view.sel().clear()
-        if self.tracked_position <= len(patched_version):
+        if self.tracked_position <= len(state_length):
             self.view.sel().add(sublime.Region(self.tracked_position, self.tracked_position))
             self.view.show(sublime.Region(self.tracked_position, self.tracked_position+1))
         else:
@@ -232,7 +232,7 @@ def apply_history_patches_with_deletions(
                     if diff_type == 0:
                         start_offset += len(diff_text)
                     if diff_type == -1:
-                       if tracked_position > start_offset+patch.start2+len(diff_text) and (
+                       if tracked_position > start_offset+patch.start2 and (
                             tracked_position < len(fully_patched_original)):
                             tracked_position -= len(diff_text)
                             # print(patch.__dict__)
@@ -246,7 +246,8 @@ def apply_history_patches_with_deletions(
                             # print(patch.__dict__)
                             print(diff_text)
                             print('moving forward', len(diff_text))
-                            print('now', tracked_position)  
+                            print('now', tracked_position) 
+    state_length = len(fully_patched_original) 
     if next_patch:
         if index > 0:
             next_patch = dmp.patch_fromText(next_patch)
@@ -275,7 +276,7 @@ def apply_history_patches_with_deletions(
             added_ranges.append((0, len(fully_patched_original)))
     print('FINAL TRACKED POSITION')
     print(tracked_position)
-    return fully_patched_original, added_ranges, deleted_ranges, tracked_position
+    return fully_patched_original, added_ranges, deleted_ranges, tracked_position, state_length
 
 def apply_patches(history):
     dmp = dmp_module.diff_match_patch()
