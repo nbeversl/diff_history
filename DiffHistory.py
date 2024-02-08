@@ -186,6 +186,7 @@ class ShowTimeWrittenCommand(sublime_plugin.TextCommand):
     def show_state(self, index):
         self.view.erase_regions('dmp_add')
         self.view.erase_regions('dmp_del')
+        self.view.erase_regions('dmp_position')
         if self.timestamps[index-1] in self.position_changes:
             state = self.position_changes[self.timestamps[index-1]]
             self.view.run_command('diff_match_patch_replace', {
@@ -195,18 +196,24 @@ class ShowTimeWrittenCommand(sublime_plugin.TextCommand):
                 })
             for patch in self.position_changes[self.timestamps[index-1]]['patches']:
                 if patch['change'] == ' (added)':
+                    print(patch)
                     self.view.add_regions('dmp_add',
                         [sublime.Region(patch['region'][0], patch['region'][1])],
                         scope="region.greenish")
                 elif patch['change'] == ' (deleted)':
+                    print(patch)
                     self.view.add_regions('dmp_del', 
                         [sublime.Region(patch['region'][0], patch['region'][1])],
                         scope="region.redish")
             self.view.sel().clear()
+            print(state['position_at_timestamp'])
             # if state['position_is_showing'] == True:
             self.view.sel().add(sublime.Region(state['position_at_timestamp'], state['position_at_timestamp']+1))
-            self.view.show(sublime.Region(state['position_at_timestamp'], state['position_at_timestamp']))
-
+            self.view.show_at_center(sublime.Region(state['position_at_timestamp'], state['position_at_timestamp']))
+            self.view.add_regions('dmp_position', 
+                [sublime.Region(state['position_at_timestamp'], state['position_at_timestamp']+1)],
+                scope="region.yellowish")
+            self.view.sel().clear()
     def done(self, index):
         self.view.erase_regions('dmp_add')
         deleted_regions = self.view.get_regions('dmp_del')
@@ -274,14 +281,14 @@ def apply_history_patches_with_deletions(
 
     for index in range(0, len(timestamps) - distance_back):
         next_patch = history[timestamps[index]]
-        if index == 0: # first entry
+        if index == len(timestamps)-1: # first entry
             fully_patched_original = next_patch
             continue
         patch_group = dmp.patch_fromText(next_patch)
         fully_patched_original = dmp.patch_apply(dmp.patch_fromText(next_patch), fully_patched_original)[0]
 
     if next_patch:
-        if index > 0:
+        if index <len(timestamps):
             next_patch = dmp.patch_fromText(next_patch)
             for patch in next_patch:
                 start_offset = 0
@@ -319,33 +326,40 @@ def apply_history_patches_with_deletions_at_position(
     position_changes = {}
     patched_contents_at_position = current_contents
     position_is_showing = True
+    r = None
 
     for index in range(0, len(timestamps)):
         timestamp = timestamps[index]
-        next_patch = history[timestamp]
-        if index == len(timestamps) - 1:
-            if tracked_stop_position in range(len(next_patch)): # first entry
+        previous_patch = history[timestamp]
+        if index == len(timestamps)-1:
+            if tracked_stop_position in range(len(previous_patch)): # first entry
                 position_changes[timestamp] = {}
                 position_changes[timestamp]['patches'] = [{
                     'change': ' (added)',
-                    'region': (0, len(next_patch)),
+                    'region': (0, len(previous_patch)),
                 }]
                 position_changes[timestamp]['position_at_timestamp'] = tracked_stop_position
-                position_changes[timestamp]['state'] = next_patch
+                position_changes[timestamp]['state'] = previous_patch
             continue
-        r = reverse_patch(next_patch)
+        r = reverse_patch(previous_patch)
 
-        patched_contents_at_position = dmp.patch_apply(r, patched_contents_at_position)[0]
         position_changes.setdefault(timestamp, {'patches':[]})
-        print('--------------------------')
         for patch in r:
-            # print(patch.__dict__)
             for diff_type, diff_text in patch.diffs:
                 start_offset = 0
                 if diff_type == 0:
-                    start_offset += patch.length2 # ?
+                    start_offset += patch.length2
+                    if patched_contents_at_position[patch.start2:patch.start2+len(diff_text)] != diff_text:
+                        print('ERRPR')
+                        print('DIFF TEXT IS:\n', diff_text)
+                        print('TEXT THERE IS:\n', patched_contents_at_position[patch.start2:patch.start2+len(diff_text)] )
+                    else:
+                        print("SUCCESS")
+                        print('DIFF TEXT IS:\n', diff_text)
+                        print('TEXT THERE IS:\n', patched_contents_at_position[patch.start2:patch.start2+len(diff_text)] )
 
                 if diff_type == -1:
+                    print('DELETIONG')
                     start_pos = start_offset + patch.start2
                     end_pos = start_pos + patch.length2
 
@@ -360,6 +374,7 @@ def apply_history_patches_with_deletions_at_position(
                         'region' : (start_pos, end_pos)})
 
                 if diff_type == 1:
+                    print('ADDITION')
                     start_pos = start_offset + patch.start2
                     end_pos = start_pos + patch.length2
 
@@ -373,15 +388,29 @@ def apply_history_patches_with_deletions_at_position(
                         'change': ' (added)',
                         'region' : (start_pos, end_pos)})
 
-                        # patched_contents_at_position = ''.join([
-                        #     patched_contents_at_position[:start_pos],
-                        #     diff_text,
-                        #     patched_contents_at_position[end_pos:]
-                        # ])
-
+        patched_contents_at_position = dmp.patch_apply(r, patched_contents_at_position)[0]
         position_changes[timestamp]['state'] = patched_contents_at_position
         position_changes[timestamp]['position_at_timestamp'] = tracked_stop_position
         position_changes[timestamp]['position_is_showing'] = position_is_showing
+
+    if r:
+        position_changes.setdefault(timestamp, {'patches':[]})
+        for patch in r:
+            for diff_type, diff_text in patch.diffs:
+                start_offset = 0
+                if diff_type == 0:
+                    start_offset += len(diff_text)
+                if diff_type == -1:
+                    patched_contents_at_position = ''.join([
+                        patched_contents_at_position[:start_offset+patch.start1],
+                        diff_text,
+                        patched_contents_at_position[start_offset+patch.start1:]
+                        ])
+                    if tracked_stop_position > patch.start2 + start_offset and tracked_stop_position < len(patched_contents_at_position):
+                        position_changes[timestamp]['position_at_timestamp'] += len(diff_text)
+        position_changes[timestamp]['position_at_timestamp'] = tracked_stop_position + len(diff_text)                  
+        position_changes[timestamp]['state'] = patched_contents_at_position
+
     return position_changes
 
 def reverse_patch(patch_text):
