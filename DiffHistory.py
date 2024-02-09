@@ -99,8 +99,6 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
             if not self.patch_changes:
                 return
 
-            
-
             string_timestamps = [
                 datetime.datetime.fromtimestamp(int(i)).strftime(TS_FORMAT) for i in 
                 sorted([int(i) for i in self.patch_changes.keys()], reverse=True)
@@ -112,8 +110,7 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
             if self.view.sel():
                 self.tracked_position = self.view.sel()[0].a
             
-            self.tracked_position_will_decrease_by = 0
-            self.tracked_position_will_increase_by = 0
+            self.tracked_position_change = 0
             self.last_patch_index = None
             self.position_is_being_tracked = True
             self.view.sel().clear()
@@ -131,10 +128,8 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
         timestamp = self.timestamps[distance_back]        
         patch = self.patch_changes[timestamp]
         if self.position_is_being_tracked:
-            self.tracked_position -= self.tracked_position_will_decrease_by
-            self.tracked_position += self.tracked_position_will_increase_by
-            self.tracked_position_will_decrease_by = 0
-            self.tracked_position_will_increase_by = 0
+            self.tracked_position += self.tracked_position_change
+            self.tracked_position_change = 0
         if self.position_will_be_tracked == False:
             self.position_is_being_tracked = False
 
@@ -155,20 +150,18 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
                 scope="region.greenish")
             if self.tracked_position and self.position_is_being_tracked:
                 if region[1] < self.tracked_position:
-                    self.tracked_position_will_decrease_by += region[1] - region[0]
-                else:
-                    if self.tracked_position in range(region[0], region[1]):
-                        self.position_will_be_tracked = False
+                    self.tracked_position_change = (region[1] - region[0]) * -1
+                elif self.tracked_position in range(region[0], region[1]):
+                    self.position_will_be_tracked = False
 
-        # current position stays the same but must be adjusted on the next view.
         for region in patch['deleted_ranges']:
             self.view.add_regions('dmp_del', 
                 [sublime.Region(region[0], region[1])],
                 scope="region.redish")
 
             if self.tracked_position and self.position_is_being_tracked:
-                if self.tracked_position > region[1]:
-                    self.tracked_position_will_increase_by += region[1] - region[0]
+                if region[1] < self.tracked_position:
+                    self.tracked_position_change = (region[1] - region[0])
                 if self.tracked_position in range(region[0], region[1]):
                     self.position_will_be_tracked = False
         
