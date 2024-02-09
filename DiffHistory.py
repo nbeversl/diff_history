@@ -99,13 +99,19 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
             if not self.patch_changes:
                 return
 
+            
+
             string_timestamps = [
                 datetime.datetime.fromtimestamp(int(i)).strftime(TS_FORMAT) for i in 
                 sorted([int(i) for i in self.patch_changes.keys()], reverse=True)
                 ]
 
             self.timestamps = sorted(self.patch_changes.keys(), reverse=True)
-            self.tracked_position = self.view.sel()[0].a
+            
+            self.tracked_position = None
+            if self.view.sel():
+                self.tracked_position = self.view.sel()[0].a
+            
             self.tracked_position_will_decrease_by = 0
             self.tracked_position_will_increase_by = 0
             self.last_patch_index = None
@@ -147,7 +153,7 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
             self.view.add_regions('dmp_add', 
                 [sublime.Region(region[0], region[1])],
                 scope="region.greenish")
-            if self.position_is_being_tracked:
+            if self.tracked_position and self.position_is_being_tracked:
                 if region[1] < self.tracked_position:
                     self.tracked_position_will_decrease_by += region[1] - region[0]
                 else:
@@ -160,28 +166,26 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
                 [sublime.Region(region[0], region[1])],
                 scope="region.redish")
 
-            if self.position_is_being_tracked:
+            if self.tracked_position and self.position_is_being_tracked:
                 if self.tracked_position > region[1]:
-                    self.tracked_position_will_decrease_by += region[1] - region[0]
+                    self.tracked_position_will_increase_by += region[1] - region[0]
                 if self.tracked_position in range(region[0], region[1]):
                     self.position_will_be_tracked = False
         
-        
-
-        # this is for if we want to track by diff, not by position
-        # if patch['added_ranges']:
-        #     self.view.show(sublime.Region(
-        #         patch['added_ranges'][0][0],
-        #         patch['added_ranges'][0][1]))
-        # elif patch['deleted_ranges']:
-        #     self.view.show(sublime.Region(
-        #         patch['deleted_ranges'][0][0],
-        #         patch['deleted_ranges'][0][1]))
-        if self.tracked_position_is_showing:
-            self.view.add_regions('dmp_pos', 
-                [sublime.Region(self.tracked_position, self.tracked_position+1)],
-                scope="region.yellowish")
-        print(self.tracked_position)
+        if self.tracked_position == None:
+            if patch['added_ranges']:
+                self.view.show(sublime.Region(
+                    patch['added_ranges'][0][0],
+                    patch['added_ranges'][0][1]))
+            elif patch['deleted_ranges']:
+                self.view.show(sublime.Region(
+                    patch['deleted_ranges'][0][0],
+                    patch['deleted_ranges'][0][1]))
+        else:
+            if self.tracked_position_is_showing:
+                self.view.add_regions('dmp_pos', 
+                    [sublime.Region(self.tracked_position, self.tracked_position+1)],
+                    scope="region.yellowish")
  
     def done(self, index):
         self.view.erase_regions('dmp_add')
