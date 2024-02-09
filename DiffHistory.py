@@ -8,9 +8,6 @@ import json
 import concurrent.futures
 import DiffHistory.diff_match_patch as dmp_module
 
-
-# There are two things that are more difficult than making an after-dinner speech: climbing a wall which is leaning toward you and kissing a girl who is leaning away from you.
-# Churchill%60 talked about cli
 is_browsing_history = False
 TS_FORMAT = '%a., %b. %d, %Y, %I:%M %p'
 
@@ -43,7 +40,7 @@ class TakeSnapshot(EventListener):
         return True
 
     def take_snapshot(self, view):
-        print('taking take_snapshot')
+        print('taking snapshot')
         take_snapshot(
             view.file_name(), 
             view.substr(sublime.Region(0, view.size()))
@@ -60,7 +57,7 @@ class TakeSnapshot(EventListener):
                 if v.file_name() == old_name:
                     self.old_name = old_name
                     self.view_being_renamed = v
-            return
+                return
 
             if self.old_name:
                 new_filename = self.view_being_renamed.file_name()
@@ -93,30 +90,49 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
         if self.view.file_name():
 
             global is_browsing_history
+            if is_browsing_history:
+                return
             is_browsing_history = True
-            
-            new_history = get_history(self.view.file_name())                
-            if not new_history:
-                return None
-
             self.existing_contents = self.view.substr(sublime.Region(0, self.view.size()))
+            take_snapshot(self.view.file_name(), self.existing_contents)
+            self.patch_changes = build_history_patches_with_deletions(self.view.file_name())              
+            if not self.patch_changes:
+                return
 
-            self.patch_changes = apply_history_patches_with_deletions(self.view.file_name())
             string_timestamps = [
                 datetime.datetime.fromtimestamp(int(i)).strftime(TS_FORMAT) for i in 
                 sorted([int(i) for i in self.patch_changes.keys()], reverse=True)
                 ]
+
             self.timestamps = sorted(self.patch_changes.keys(), reverse=True)
             self.tracked_position = self.view.sel()[0].a
+            self.tracked_position_will_decrease_by = 0
+            self.tracked_position_will_increase_by = 0
+            self.last_patch_index = None
+            self.position_is_being_tracked = True
+            self.view.sel().clear()
             self.tracked_position_is_showing = True
+            self.position_will_be_tracked = True
             self.view.window().show_quick_panel(
                 string_timestamps,
                 self.done,
                 on_highlight=self.show_state)
 
     def show_state(self, distance_back):
+        if distance_back == self.last_patch_index:
+            return 
+        self.last_patch_index = distance_back
         timestamp = self.timestamps[distance_back]        
         patch = self.patch_changes[timestamp]
+        if self.position_is_being_tracked:
+            self.tracked_position -= self.tracked_position_will_decrease_by
+            self.tracked_position += self.tracked_position_will_increase_by
+            self.tracked_position_will_decrease_by = 0
+            self.tracked_position_will_increase_by = 0
+        if self.position_will_be_tracked == False:
+            self.position_is_being_tracked = False
+
+        # update the buffer state, clear all highlighted ranges
         self.view.run_command('diff_match_patch_replace', {
             'start' : 0,
             'end' :self.view.size(),
@@ -127,31 +143,49 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
         self.view.erase_regions('dmp_del')
         self.view.erase_regions('dmp_pos')
 
-        self.view.add_regions('dmp_add', 
-            [sublime.Region(r[0], r[1]) for r in patch['added_ranges']],
-            scope="region.greenish")
-        self.view.add_regions('dmp_del', 
-            [sublime.Region(r[0], r[1]) for r in patch['deleted_ranges']],
-            scope="region.redish")
-        if patch['added_ranges']:
-            self.view.show(sublime.Region(
-                patch['added_ranges'][0][0],
-                patch['added_ranges'][0][1]))
-        elif patch['deleted_ranges']:
-            self.view.show(sublime.Region(
-                patch['deleted_ranges'][0][0],
-                patch['deleted_ranges'][0][1]))
-        self.view.sel().clear()
-        self.view.add_regions('dmp_pos',
-            [sublime.Region(
-                self.tracked_position,
-                self.tracked_position+1)],
-            scope="region.yellowish")
+        for region in patch['added_ranges']:
+            self.view.add_regions('dmp_add', 
+                [sublime.Region(region[0], region[1])],
+                scope="region.greenish")
+            if self.position_is_being_tracked:
+                if region[1] < self.tracked_position:
+                    self.tracked_position_will_decrease_by += region[1] - region[0]
+                else:
+                    if self.tracked_position in range(region[0], region[1]):
+                        self.position_will_be_tracked = False
 
-    def done(self, index):
+        # current position stays the same but must be adjusted on the next view.
+        for region in patch['deleted_ranges']:
+            self.view.add_regions('dmp_del', 
+                [sublime.Region(region[0], region[1])],
+                scope="region.redish")
+
+            if self.position_is_being_tracked:
+                if self.tracked_position > region[1]:
+                    self.tracked_position_will_decrease_by += region[1] - region[0]
+                if self.tracked_position in range(region[0], region[1]):
+                    self.position_will_be_tracked = False
         
+        
+
+        # this is for if we want to track by diff, not by position
+        # if patch['added_ranges']:
+        #     self.view.show(sublime.Region(
+        #         patch['added_ranges'][0][0],
+        #         patch['added_ranges'][0][1]))
+        # elif patch['deleted_ranges']:
+        #     self.view.show(sublime.Region(
+        #         patch['deleted_ranges'][0][0],
+        #         patch['deleted_ranges'][0][1]))
+        if self.tracked_position_is_showing:
+            self.view.add_regions('dmp_pos', 
+                [sublime.Region(self.tracked_position, self.tracked_position+1)],
+                scope="region.yellowish")
+        print(self.tracked_position)
+ 
+    def done(self, index):
         self.view.erase_regions('dmp_add')
-        if index > -1:
+        if index > -1: 
             deleted_regions = self.view.get_regions('dmp_del')
             for r in deleted_regions:
                 self.view.run_command('diff_match_patch_replace', {
@@ -159,7 +193,7 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
                     'end' :r.b,
                     'replacement_text' :''
                     })
-        else:
+        else: # escaped/cancelled
             self.view.run_command('diff_match_patch_replace', {
                 'start' : 0,
                 'end' :self.view.size(),
@@ -194,12 +228,12 @@ def take_snapshot(filename, contents):
                 dmp.patch_make(
                     latest_history, 
                     contents)
-                )                
+                )
             os.remove(history_file) # might prevent duplicate files on cloud storage ?
             with open(history_file, "w") as f:
                 f.write(json.dumps(file_history))
 
-def apply_history_patches_with_deletions(filename):
+def build_history_patches_with_deletions(filename):
 
     dmp = dmp_module.diff_match_patch()
     history = get_history(filename)
