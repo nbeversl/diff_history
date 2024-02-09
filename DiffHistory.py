@@ -127,9 +127,6 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
         self.last_patch_index = distance_back
         timestamp = self.timestamps[distance_back]        
         patch = self.patch_changes[timestamp]
-        if self.position_is_being_tracked:
-            self.tracked_position += self.tracked_position_change
-            self.tracked_position_change = 0
         if self.position_will_be_tracked == False:
             self.position_is_being_tracked = False
 
@@ -150,9 +147,9 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
                 scope="region.greenish")
             if self.tracked_position and self.position_is_being_tracked:
                 if region[1] < self.tracked_position:
-                    self.tracked_position_change = (region[1] - region[0]) * -1
-                elif self.tracked_position in range(region[0], region[1]):
-                    self.position_will_be_tracked = False
+                    self.tracked_position += (region[1] - region[0])
+            elif self.tracked_position in range(region[0], region[1]):
+                self.position_will_be_tracked = True
 
         for region in patch['deleted_ranges']:
             self.view.add_regions('dmp_del', 
@@ -161,7 +158,7 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
 
             if self.tracked_position and self.position_is_being_tracked:
                 if region[1] < self.tracked_position:
-                    self.tracked_position_change = (region[1] - region[0])
+                    self.tracked_position -= (region[1] - region[0])
                 if self.tracked_position in range(region[0], region[1]):
                     self.position_will_be_tracked = False
         
@@ -268,6 +265,7 @@ def build_history_patches_with_deletions(filename):
         display_state_at_timestamp = fully_patched_original
         for patch in patch_group:
             start_offset = 0
+            offset = 0
             for diff_type, diff_text in patch.diffs:
                 if diff_type == 0:
                     start_offset += len(diff_text)
@@ -280,8 +278,9 @@ def build_history_patches_with_deletions(filename):
                         display_state_at_timestamp[start_pos:]
                         ])
                     patch_changes[timestamp]['deleted_ranges'].append((start_pos, end_pos))
+                    offset = len(diff_text)
                 if diff_type == 1:
-                    patch_changes[timestamp]['added_ranges'].append((start_pos, end_pos))
+                    patch_changes[timestamp]['added_ranges'].append((start_pos+offset, end_pos+offset))
 
         patch_changes[timestamp]['display'] = display_state_at_timestamp
 
