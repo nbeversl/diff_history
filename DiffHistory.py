@@ -95,7 +95,9 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
             is_browsing_history = True
             self.existing_contents = self.view.substr(sublime.Region(0, self.view.size()))
             take_snapshot(self.view.file_name(), self.existing_contents)
-            self.patch_changes = build_history_patches_with_deletions(self.view.file_name())              
+            self.patch_changes = build_history_patches_with_deletions(
+                self.view.file_name(),
+                self.view.sel()[0].a)              
             if not self.patch_changes:
                 return
 
@@ -105,46 +107,21 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
                 ]
 
             self.timestamps = sorted(self.patch_changes.keys(), reverse=True)
-            
-            self.tracked_position = self.view.sel()[0].a
-            self.tracked_position_is_showing = True
-            self.position_will_be_tracked = True
-            self.position_is_being_tracked = True
-            self.view.sel().clear()
-            self.tracked_position_change = 0
             self.view.window().show_quick_panel(
                 string_timestamps,
                 self.done,
                 on_highlight=self.show_state)
 
     def show_state(self, distance_back):
-
-        timestamp = self.timestamps[distance_back]        
-        patch = self.patch_changes[timestamp]
-
-        if 'tracked_position' not in patch:
-            self.tracked_position_change = 0
-            if self.position_will_be_tracked == False:
-                self.position_is_being_tracked = False
-                self.tracked_position_is_showing = False
-            self.tracked_position += self.tracked_position_change
-            
-            for region in patch['added_ranges']:
-                if region[1] < self.tracked_position and self.position_is_being_tracked:
-                    self.tracked_position_change += (region[1] - region[0])
-                elif self.tracked_position in range(region[0], region[1]):
-                    self.position_will_be_tracked = False
-
-            for region in patch['deleted_ranges']:
-                if region[1] < self.tracked_position and self.position_is_being_tracked:
-                    self.tracked_position_change -= (region[1] - region[0])
-
-            patch['tracked_position'] = self.tracked_position
-            patch['tracked_position_is_showing'] = self.tracked_position_is_showing
-
+        patch = self.patch_changes[self.timestamps[distance_back]]    
         self.view.erase_regions('dmp_add')
         self.view.erase_regions('dmp_del')
-        self.view.erase_regions('dmp_pos')
+
+        self.view.run_command('diff_match_patch_replace', {
+            'start' : 0,
+            'end' :self.view.size(),
+            'replacement_text' : patch['display']
+            })
 
         for region in patch['added_ranges']:
             self.view.add_regions('dmp_add', 
@@ -156,30 +133,10 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
                 [sublime.Region(region[0], region[1])],
                 scope="region.redish")
 
-        self.view.run_command('diff_match_patch_replace', {
-            'start' : 0,
-            'end' :self.view.size(),
-            'replacement_text' : patch['display']
-            })
-        
-
-        current_display_position = self.tracked_position
-        
-
-        # if self.tracked_position == None:
-        #     if patch['added_ranges']:
-        #         self.view.show(sublime.Region(
-        #             patch['added_ranges'][0][0],
-        #             patch['added_ranges'][0][1]))
-        #     elif patch['deleted_ranges']:
-        #         self.view.show(sublime.Region(
-        #             patch['deleted_ranges'][0][0],
-        #             patch['deleted_ranges'][0][1]))
-        # else:
-        if patch['tracked_position_is_showing']:
-            self.view.add_regions('dmp_pos', 
-                [sublime.Region(patch['tracked_position'], patch['tracked_position']+1)],
-                scope="region.yellowish")
+        print(patch['approx_position'])
+        self.view.show(sublime.Region(
+            patch['approx_position'],
+            patch['approx_position']))
 
     def done(self, index):
         self.view.erase_regions('dmp_add')
@@ -231,7 +188,7 @@ def take_snapshot(filename, contents):
             with open(history_file, "w") as f:
                 f.write(json.dumps(file_history))
 
-def build_history_patches_with_deletions(filename):
+def build_history_patches_with_deletions(filename, tracked_position):
 
     dmp = dmp_module.diff_match_patch()
     history = get_history(filename)
@@ -241,15 +198,12 @@ def build_history_patches_with_deletions(filename):
     added_ranges = []
     deleted_ranges = []
     next_patch = None
-    tracked_stop_position = 0
-    size_change_before_stop_position = 0
     patch_changes = {}
 
     for index in range(0, len(timestamps)):
         timestamp = timestamps[index]
         next_patch = history[timestamp]
         if index == 0: # first entry
-            fully_patched_original = next_patch
             patch_changes[timestamp] = {
                 'added_ranges': [(0, len(next_patch))],
                 'deleted_ranges' : [],
@@ -270,6 +224,7 @@ def build_history_patches_with_deletions(filename):
         for patch in patch_group:
             start_offset = 0
             offset = 0
+            offset_pos = 0
             for diff_type, diff_text in patch.diffs:
                 if diff_type == 0:
                     start_offset += len(diff_text)
@@ -277,16 +232,31 @@ def build_history_patches_with_deletions(filename):
                 end_pos = start_pos+len(diff_text)
                 if diff_type == -1:
                     display_state_at_timestamp = ''.join([
-                        display_state_at_timestamp[:start_pos+offset],
+                        display_state_at_timestamp[:start_pos],
                         diff_text,
-                        display_state_at_timestamp[start_pos+offset:]
+                        display_state_at_timestamp[start_pos:]
                         ])
                     patch_changes[timestamp]['deleted_ranges'].append((start_pos, end_pos))
                     offset = len(diff_text)
+                    offset_pos = start_pos
                 if diff_type == 1:
-                    patch_changes[timestamp]['added_ranges'].append((start_pos+offset, end_pos+offset))
+                    if offset > 0 and offset_pos < start_pos:
+                        start_pos += offset
+                    patch_changes[timestamp]['added_ranges'].append((start_pos, end_pos))
 
         patch_changes[timestamp]['display'] = display_state_at_timestamp
+
+    for index in range(len(timestamps)-1, 0, -1):
+        patch = patch_changes[timestamps[index]]
+        for region in patch['added_ranges']:
+            print(region)
+            if region[1] < tracked_position:
+                tracked_position += (region[1] - region[0])
+        for region in patch['deleted_ranges']:
+            print(region)
+            if region[1] < tracked_position:
+                tracked_position -= (region[1] - region[0])
+        patch['approx_position'] = tracked_position
 
     return patch_changes
 
