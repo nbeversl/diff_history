@@ -40,7 +40,6 @@ class TakeSnapshot(EventListener):
         return True
 
     def take_snapshot(self, view):
-        print('taking snapshot')
         take_snapshot(
             view.file_name(), 
             view.substr(sublime.Region(0, view.size()))
@@ -133,10 +132,10 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
                 [sublime.Region(region[0], region[1])],
                 scope="region.redish")
 
-        print(patch['approx_position'])
-        self.view.show(sublime.Region(
+        self.view.show_at_center(sublime.Region(
             patch['approx_position'],
-            patch['approx_position']))
+            patch['approx_position']),
+            animate=False)
 
     def done(self, index):
         self.view.erase_regions('dmp_add')
@@ -223,8 +222,8 @@ def build_history_patches_with_deletions(filename, tracked_position):
         display_state_at_timestamp = fully_patched_original
         for patch in patch_group:
             start_offset = 0
-            offset = 0
-            offset_pos = 0
+            # offset = 0
+            # offset_pos = 0
             for diff_type, diff_text in patch.diffs:
                 if diff_type == 0:
                     start_offset += len(diff_text)
@@ -237,11 +236,11 @@ def build_history_patches_with_deletions(filename, tracked_position):
                         display_state_at_timestamp[start_pos:]
                         ])
                     patch_changes[timestamp]['deleted_ranges'].append((start_pos, end_pos))
-                    offset = len(diff_text)
-                    offset_pos = start_pos
+                    # offset = len(diff_text)
+                    # offset_pos = start_pos
                 if diff_type == 1:
-                    if offset > 0 and offset_pos < start_pos:
-                        start_pos += offset
+                    # if offset > 0 and offset_pos < start_pos:
+                    #     start_pos += offset
                     patch_changes[timestamp]['added_ranges'].append((start_pos, end_pos))
 
         patch_changes[timestamp]['display'] = display_state_at_timestamp
@@ -249,11 +248,9 @@ def build_history_patches_with_deletions(filename, tracked_position):
     for index in range(len(timestamps)-1, 0, -1):
         patch = patch_changes[timestamps[index]]
         for region in patch['added_ranges']:
-            print(region)
-            if region[1] < tracked_position:
+            if region[0] < tracked_position:
                 tracked_position += (region[1] - region[0])
         for region in patch['deleted_ranges']:
-            print(region)
             if region[1] < tracked_position:
                 tracked_position -= (region[1] - region[0])
         patch['approx_position'] = tracked_position
