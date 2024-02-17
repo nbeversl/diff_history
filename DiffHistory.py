@@ -210,6 +210,7 @@ def build_history_patches_with_deletions(filename, tracked_position):
                 'deleted_ranges' : [],
                 'state': next_patch,
                 'display' : next_patch,
+                'approx_position': tracked_position
             }
             continue
 
