@@ -6,6 +6,7 @@ import time
 import datetime
 import os
 import json
+import concurrent.futures
 import DiffHistory.diff_match_patch as dmp_module
 
 is_browsing_history = False
@@ -14,26 +15,67 @@ class TakeSnapshot(EventListener):
 
     def __init__(self):
         self.last_time = time.time()
+        self.file_being_renamed = None
+        self.old_name = None
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=10) 
 
     def on_modified(self, view):
-        self.take_snapshot(view)
+        self.executor.submit(self.take_snapshot, view)
 
     def on_post_save_async(self, view):
-        self.take_snapshot(view)
+        self.executor.submit(self.take_snapshot, view)
 
     def take_snapshot(self, view):
         global is_browsing_history
         if is_browsing_history:
             return
+        filename = view.file_name()
+        if not filename or not view or (filename.endswith('.diff')):
+            return
         now = time.time()
         if now - self.last_time < 5:
             return
         self.last_time = now
-        if view and view.file_name():
-            take_snapshot(
-                view.file_name(), 
-                view.substr(sublime.Region(0, view.size()))
-                )
+        take_snapshot(
+            filename, 
+            view.substr(sublime.Region(0, view.size()))
+            )
+
+    def on_window_command(self, window, command_name, args):
+        #### Change the rename functionality here instead of using built-in events.
+        if command_name == 'rename_path':
+            old_name = args['paths'][0]
+            for v in window.views():
+                if v.file_name() == old_name:
+                    self.old_name = old_name
+                    self.view_being_renamed = v
+            print(window.active_panel())
+
+            return
+            #####
+            if self.old_name:
+                new_filename = self.view_being_renamed.file_name()
+                old_history_file = os.path.join(
+                    os.path.dirname(self.old_name), 
+                    '_diff',
+                    os.path.basename(self.old_name) + '.diff')
+                
+                if os.path.exists(old_history_file):
+                    if not os.path.exists(os.path.join(
+                            os.path.dirname(new_filename),
+                            '_diff'
+                            )):
+                        os.mkdir(
+                            os.path.join(
+                                os.path.dirname(new_filename), 
+                                '_diff'))
+                    new_history_file = os.path.join(
+                        os.path.dirname(new_filename),
+                        '_diff',
+                        os.path.basename(new_filename) + '.diff')
+                    os.rename(old_history_file, new_history_file)
+            self.old_name = None
+            self.view_being_renamed = None
 
 def get_contents(view):
     if view != None: 
