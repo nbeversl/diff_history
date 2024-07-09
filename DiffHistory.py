@@ -1,4 +1,3 @@
-
 import sublime
 import sublime_plugin
 from sublime_plugin import EventListener
@@ -10,6 +9,7 @@ import concurrent.futures
 import DiffHistory.diff_match_patch as dmp_module
 
 is_browsing_history = False
+TS_FORMAT = '%a., %b. %d, %Y, %I:%M %p'
 
 class TakeSnapshot(EventListener):
 
@@ -28,31 +28,35 @@ class TakeSnapshot(EventListener):
     def take_snapshot(self, view):
         global is_browsing_history
         if is_browsing_history:
-            return
+            return False
         filename = view.file_name()
-        if not filename or not view or (filename.endswith('.diff')):
-            return
+        if not filename or not view or filename.endswith('.diff'):
+            return False
         now = time.time()
         if now - self.last_time < 5:
-            return
+            return False
         self.last_time = now
+        return True
+
+    def take_snapshot(self, view):
         take_snapshot(
-            filename, 
+            view.file_name(), 
             view.substr(sublime.Region(0, view.size()))
             )
 
     def on_window_command(self, window, command_name, args):
-        #### Change the rename functionality here instead of using built-in events.
+        """
+        Change the rename functionality here 
+        instead of using built-in events. 
+        """
         if command_name == 'rename_path':
             old_name = args['paths'][0]
             for v in window.views():
                 if v.file_name() == old_name:
                     self.old_name = old_name
                     self.view_being_renamed = v
-            print(window.active_panel())
+                return
 
-            return
-            #####
             if self.old_name:
                 new_filename = self.view_being_renamed.file_name()
                 old_history_file = os.path.join(
@@ -77,11 +81,6 @@ class TakeSnapshot(EventListener):
             self.old_name = None
             self.view_being_renamed = None
 
-def get_contents(view):
-    if view != None: 
-        return view.substr(sublime.Region(0, view.size()))
-    return None
-
 class BrowseHistoryCommand(sublime_plugin.TextCommand):
 
     def run(self, edit):
@@ -89,39 +88,74 @@ class BrowseHistoryCommand(sublime_plugin.TextCommand):
         if self.view.file_name():
 
             global is_browsing_history
+            if is_browsing_history:
+                return
             is_browsing_history = True
-            
-            take_snapshot(
-                self.view.file_name(), 
-                self.view.substr(sublime.Region(0, self.view.size()))
-                )
+            self.existing_contents = self.view.substr(sublime.Region(0, self.view.size()))
+            take_snapshot(self.view.file_name(), self.existing_contents)
+            self.patch_changes = build_history_patches_with_deletions(
+                self.view.file_name(),
+                self.view.sel()[0].a)              
+            if not self.patch_changes:
+                return
 
-            new_history = get_history(self.view.file_name())                
-            if not new_history:
-                return None
-            
-            ts_format = '%a., %b. %d, %Y, %I:%M %p'
             string_timestamps = [
-                datetime.datetime.fromtimestamp(int(i)).strftime(ts_format) for i in 
-                sorted(new_history.keys(), reverse=True)
+                datetime.datetime.fromtimestamp(int(i)).strftime(TS_FORMAT) for i in 
+                sorted([int(i) for i in self.patch_changes.keys()], reverse=True)
                 ]
 
+            self.timestamps = sorted(self.patch_changes.keys(), reverse=True)
             self.view.window().show_quick_panel(
                 string_timestamps,
                 self.done,
-                on_highlight=self.show_state,
-                )
+                on_highlight=self.show_state)
+
+    def show_state(self, distance_back):
+        patch = self.patch_changes[self.timestamps[distance_back]]    
+        self.view.erase_regions('dmp_add')
+        self.view.erase_regions('dmp_del')
+
+        self.view.run_command('diff_match_patch_replace', {
+            'start' : 0,
+            'end' :self.view.size(),
+            'replacement_text' : patch['display']
+            })
+
+        for region in patch['added_ranges']:
+            self.view.add_regions('dmp_add', 
+                [sublime.Region(region[0], region[1])],
+                scope="region.greenish")
+
+        for region in patch['deleted_ranges']:
+            self.view.add_regions('dmp_del', 
+                [sublime.Region(region[0], region[1])],
+                scope="region.redish")
+
+        self.view.show_at_center(sublime.Region(
+            patch['approx_position'],
+            patch['approx_position']),
+            animate=False)
 
     def done(self, index):
+        self.view.erase_regions('dmp_add')
+        if index > -1: 
+            deleted_regions = self.view.get_regions('dmp_del')
+            for r in deleted_regions:
+                self.view.run_command('diff_match_patch_replace', {
+                    'start' : r.a,
+                    'end' :r.b,
+                    'replacement_text' :''
+                    })
+        else: # escaped/cancelled
+            self.view.run_command('diff_match_patch_replace', {
+                'start' : 0,
+                'end' :self.view.size(),
+                'replacement_text' : self.existing_contents
+            })
+        self.view.erase_regions('dmp_del')
+        self.view.erase_regions('dmp_pos')
         global is_browsing_history
         is_browsing_history=False
-
-    def show_state(self, index):
-        state = apply_history_patches(self.view.file_name(), index)
-        self.view.run_command("select_all")
-        self.view.run_command("right_delete")
-        for line in state.split('\n'):
-            self.view.run_command("append", {"characters": line+ "\n" })
 
 def take_snapshot(filename, contents):
 
@@ -147,29 +181,92 @@ def take_snapshot(filename, contents):
                 dmp.patch_make(
                     latest_history, 
                     contents)
-                )                
+                )
             os.remove(history_file) # might prevent duplicate files on cloud storage ?
             with open(history_file, "w") as f:
                 f.write(json.dumps(file_history))
 
-def apply_history_patches(filename, distance_back):
-    file_history = get_history(filename)
-    distance_back = int(distance_back)
-    return apply_patches(file_history, distance_back)
- 
-def most_recent_history(self, history):
-    times = sorted(history.keys())
-    return times[-1]
 
-def apply_patches(history, distance_back=0):
+def build_history_patches_with_deletions(filename, tracked_position):
+
+    dmp = dmp_module.diff_match_patch()
+    history = get_history(filename)
+    timestamps = sorted(history.keys())
+    original = history[timestamps[0]]
+    fully_patched_original = original
+    added_ranges = []
+    deleted_ranges = []
+    next_patch = None
+
+    patch_changes = {}
+
+    for index in range(0, len(timestamps)):
+        timestamp = timestamps[index]
+        next_patch = history[timestamp]
+        if index == 0: # first entry
+            patch_changes[timestamp] = {
+                'added_ranges': [(0, len(next_patch))],
+                'deleted_ranges' : [],
+                'state': next_patch,
+                'display' : next_patch,
+                'approx_position': tracked_position
+            }
+            continue
+
+        patch_group = dmp.patch_fromText(next_patch)
+        fully_patched_original = dmp.patch_apply(
+            patch_group,
+            fully_patched_original)[0]
+        patch_changes[timestamp] = {
+            'added_ranges' : [],
+            'deleted_ranges' : []
+        }
+        display_state_at_timestamp = fully_patched_original
+        for patch in patch_group:
+            start_offset = 0
+            # offset = 0
+            # offset_pos = 0
+            for diff_type, diff_text in patch.diffs:
+                if diff_type == 0:
+                    start_offset += len(diff_text)
+                start_pos = start_offset+patch.start2
+                end_pos = start_pos+len(diff_text)
+                if diff_type == -1:
+                    display_state_at_timestamp = ''.join([
+                        display_state_at_timestamp[:start_pos],
+                        diff_text,
+                        display_state_at_timestamp[start_pos:]
+                        ])
+                    patch_changes[timestamp]['deleted_ranges'].append((start_pos, end_pos))
+                    # offset = len(diff_text)
+                    # offset_pos = start_pos
+                if diff_type == 1:
+                    # if offset > 0 and offset_pos < start_pos:
+                    #     start_pos += offset
+                    patch_changes[timestamp]['added_ranges'].append((start_pos, end_pos))
+
+        patch_changes[timestamp]['display'] = display_state_at_timestamp
+
+    for index in range(len(timestamps)-1, 0, -1):
+        patch = patch_changes[timestamps[index]]
+        for region in patch['added_ranges']:
+            if region[0] < tracked_position:
+                tracked_position += (region[1] - region[0])
+        for region in patch['deleted_ranges']:
+            if region[1] < tracked_position:
+                tracked_position -= (region[1] - region[0])
+        patch['approx_position'] = tracked_position
+
+    return patch_changes
+
+def apply_patches(history):
     dmp = dmp_module.diff_match_patch()
     timestamps = sorted(history.keys())
     original = history[timestamps[0]]
-    for index in range(1,len(timestamps)-distance_back):
+    for index in range(1,len(timestamps)):
         next_patch = history[timestamps[index]]
         original = dmp.patch_apply(dmp.patch_fromText(next_patch), original)[0]
     return original
-
 
 def get_history(filename):
     history_file = os.path.join(
@@ -181,3 +278,7 @@ def get_history(filename):
             file_history = f.read()
         return json.loads(file_history)
 
+class DiffMatchPatchReplace(sublime_plugin.TextCommand):
+
+    def run(self, edit, start=0, end=0, replacement_text=''):
+        self.view.replace(edit, sublime.Region(start, end), replacement_text)
